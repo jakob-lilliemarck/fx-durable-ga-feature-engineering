@@ -1,0 +1,9 @@
+[package]
+name = "fx-durable-ga-example-feature-engineering"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror = "2.0.12"
+regex = "1.12.2"
+anyhow = "1.0.100"
