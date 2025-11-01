@@ -1,14 +1,15 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, fmt::Display};
 
+#[derive(Debug, Clone)]
 pub struct Ema {
     /// The window size of this ema
-    window: usize,
+    pub(crate) window: usize,
     /// Ema alpha, the "smoothing" factor
-    alpha: f32,
+    pub(crate) alpha: f32,
     /// The current value
-    value: f32,
+    pub(crate) value: f32,
     /// Count to track window size saturation
-    count: usize,
+    pub(crate) count: usize,
 }
 
 impl Ema {
@@ -41,10 +42,11 @@ impl Ema {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ZScore {
-    window: usize,
-    values: VecDeque<f32>, // Ring buffer of recent values
-    count: usize,
+    pub(crate) window: usize,
+    pub(crate) values: VecDeque<f32>, // Ring buffer of recent values
+    pub(crate) count: usize,
 }
 
 impl ZScore {
@@ -78,14 +80,29 @@ impl ZScore {
         // Calculate the standard deviation
         let std = variance.sqrt();
 
-        Some((value - mean) / std)
+        // Handle division by zero: if std=0, all values are identical
+        // In this case, zscore should be 0 (no deviation from mean)
+        if std == 0.0 || std.is_nan() {
+            Some(0.0)
+        } else {
+            Some((value - mean) / std)
+        }
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum Node {
-    Noop,
     Ema(Ema),
     ZScore(ZScore),
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ema(ema) => write!(f, "EMA({}, {})", ema.window, ema.alpha),
+            Self::ZScore(zscore) => write!(f, "ZSCORE({})", zscore.window),
+        }
+    }
 }
 
 impl Node {
@@ -97,16 +114,33 @@ impl Node {
         Self::ZScore(ZScore::new(window))
     }
 
-    pub fn noop() -> Self {
-        Self::Noop
-    }
-
     pub fn process(&mut self, value: f32) -> Option<f32> {
         match self {
-            Self::Noop => Some(value),
             Self::Ema(ema) => ema.process(value),
             Self::ZScore(zscore) => zscore.process(value),
         }
+    }
+}
+
+// A simple pipeline with two preprocessing steps
+#[derive(Debug, Clone)]
+pub struct Pipeline {
+    pub(crate) nodes: [Node; 2],
+}
+
+impl Pipeline {
+    pub fn new(nodes: [Node; 2]) -> Self {
+        Self { nodes }
+    }
+
+    pub fn process(&mut self, value: f32) -> Option<f32> {
+        let mut value: Option<f32> = Some(value);
+
+        for node in self.nodes.iter_mut() {
+            value = value.and_then(|value| node.process(value));
+        }
+
+        value
     }
 }
 

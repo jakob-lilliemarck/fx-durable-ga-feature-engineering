@@ -1,26 +1,66 @@
+use clap::Parser;
+
 mod batcher;
 mod dataset;
-mod parse;
-mod preprocessing;
+mod loader;
+mod model;
+mod parser;
+mod preprocessor;
+mod train;
 
-pub struct Preprocessor {
-    nodes: [preprocessing::Node; 2],
-}
+/// Train a RNN on "Gas sensor array draft dataset"
+#[derive(Debug, Parser)]
+#[command(
+    name = "example-rnn-gas-sensor-array",
+    version = "1.0",
+    author = "Jakob",
+    about = "Give credits"
+)]
+struct Cli {
+    // ============================================================
+    // Model params
+    // ============================================================
+    /// Hidden layer size
+    #[arg(long, required = true)]
+    input_size: usize,
 
-impl Preprocessor {
-    fn process(&mut self, value: f32) -> Option<f32> {
-        let mut value: Option<f32> = Some(value);
+    /// Hidden layer size
+    #[arg(long, required = true)]
+    hidden_size: usize,
 
-        for node in self.nodes.iter_mut() {
-            value = value.and_then(|value| node.process(value));
-        }
+    /// Hidden layer size
+    #[arg(long, required = true)]
+    output_size: usize,
 
-        value
-    }
+    /// Learning rate
+    #[arg(long, required = true)]
+    learning_rate: f64,
+
+    // ============================================================
+    // Preprocessing params
+    // ============================================================
+    /// Ema window size
+    #[clap(long, required = true)]
+    ema_window: usize,
+
+    /// Ema alpha
+    #[clap(long, required = true)]
+    ema_alpha: f32,
+
+    /// Zscore window size
+    #[clap(long, required = true)]
+    zscore_window: usize,
+
+    // ============================================================
+    // Training params
+    // ============================================================
+    /// Epochs
+    #[clap(long, default_value_t = 100)]
+    epochs: usize,
 }
 
 fn main() -> anyhow::Result<()> {
-    let parser = parse::LineParser::default();
+    let parser = parser::LineParser::default();
 
     let paths = [
         "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch1.dat",
@@ -35,10 +75,10 @@ fn main() -> anyhow::Result<()> {
         // "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch10.dat",
     ];
 
-    let mut rows: Vec<parse::Row> = Vec::new();
+    let mut rows: Vec<parser::Row> = Vec::new();
 
     for path in paths {
-        for row in parse::read_dat_file(path, &parser)? {
+        for row in parser::read_dat_file(path, &parser)? {
             rows.push(row);
         }
     }

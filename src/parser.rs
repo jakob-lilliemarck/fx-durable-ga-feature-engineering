@@ -3,6 +3,12 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
+/// The number of sensor readings per line, each reading produce a number of values
+use crate::dataset::NUMBER_OF_SENSORS;
+
+/// The number of values per sensor reading on each line. dr, dr_abs, ema.. etc.
+const NUMBER_OF_VALUES_PER_SENSOR: u32 = 8;
+
 #[derive(Debug)]
 pub enum Analyte {
     Ethanol,
@@ -35,10 +41,10 @@ impl TryFrom<u8> for Analyte {
 
 #[derive(Debug)]
 pub struct Row {
-    idx: usize,
-    gas: Analyte,
-    dr: Vec<f64>,
-    dr_abs: Vec<f64>,
+    pub idx: usize,
+    pub gas: Analyte,
+    pub dr: [f32; NUMBER_OF_SENSORS],
+    pub dr_abs: [f32; NUMBER_OF_SENSORS],
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -97,20 +103,20 @@ impl LineParser {
             .map_err(|_| ParseError::ParseError("Failed to parse id".to_string()))?
             .try_into()?;
 
-        let mut indexed_dr: Vec<(u32, f64)> = Vec::with_capacity(16);
-        let mut indexed_dr_abs: Vec<(u32, f64)> = Vec::with_capacity(16);
+        let mut indexed_dr: Vec<(u32, f32)> = Vec::with_capacity(NUMBER_OF_SENSORS);
+        let mut indexed_dr_abs: Vec<(u32, f32)> = Vec::with_capacity(NUMBER_OF_SENSORS);
         for cap in self.re_feature.captures_iter(line) {
             let feature_idx = cap[1]
                 .parse::<u32>()
                 .map_err(|_| ParseError::ParseError("Failed to parse feature index".to_string()))?;
 
             let feature_value = cap[2]
-                .parse::<f64>()
+                .parse::<f32>()
                 .map_err(|_| ParseError::ParseError("Failed to parse feature value".to_string()))?;
 
-            if feature_idx % 8 == 1 {
+            if feature_idx % NUMBER_OF_VALUES_PER_SENSOR == 1 {
                 indexed_dr.push((feature_idx, feature_value))
-            } else if feature_idx % 8 == 2 {
+            } else if feature_idx % NUMBER_OF_VALUES_PER_SENSOR == 2 {
                 indexed_dr_abs.push((feature_idx, feature_value))
             } else {
                 // skipping over any other features
@@ -122,8 +128,19 @@ impl LineParser {
         indexed_dr.sort_unstable_by_key(|&(idx, _)| idx);
         indexed_dr_abs.sort_unstable_by_key(|&(idx, _)| idx);
 
-        let dr: Vec<f64> = indexed_dr.into_iter().map(|(_, value)| value).collect();
-        let dr_abs: Vec<f64> = indexed_dr_abs.into_iter().map(|(_, value)| value).collect();
+        let dr = indexed_dr
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect::<Vec<f32>>()
+            .try_into()
+            .expect("Could not convert to fixed size array");
+
+        let dr_abs = indexed_dr_abs
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect::<Vec<f32>>()
+            .try_into()
+            .expect("Could not convert to fixed size array");
 
         Ok(Row {
             idx,
