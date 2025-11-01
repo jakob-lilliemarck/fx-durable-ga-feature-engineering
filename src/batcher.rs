@@ -46,14 +46,15 @@ impl<B: Backend> Batcher<B, SequenceDatasetItem, SequenceBatch<B>> for SequenceB
         }
 
         // Create tensors
-        let sequences = Tensor::<B, 3>::from_floats(all_sequences.as_slice(), device).reshape([
-            batch_size,
-            seq_len,
-            feature_dim,
-        ]);
+        let sequences = Tensor::<B, 3>::from_data(
+            TensorData::new(all_sequences, [batch_size, seq_len, feature_dim]),
+            device,
+        );
 
-        let targets = Tensor::<B, 2>::from_floats(all_targets.as_slice(), device)
-            .reshape([batch_size, feature_dim]);
+        let targets = Tensor::<B, 2>::from_data(
+            TensorData::new(all_targets, [batch_size, feature_dim]),
+            device,
+        );
 
         SequenceBatch { sequences, targets }
     }

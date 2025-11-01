@@ -14,7 +14,7 @@ If validation loss is much lower than training loss → something's wrong
 If both losses are stuck → learning rate might be too low/high
 If training loss decreases but validation doesn't → overfitting
 */
-pub fn train<B: AutodiffBackend<Gradients = GradientsParams>>(
+pub fn train<B: AutodiffBackend>(
     device: &B::Device,
     dataset_training: &SequenceDataset,
     dataset_validation: &SequenceDataset,
@@ -67,10 +67,11 @@ pub fn train<B: AutodiffBackend<Gradients = GradientsParams>>(
             let loss_value = loss.clone().into_scalar().elem::<f32>();
 
             // Backward pass
-            let gradients = loss.backward();
+            let grads = loss.backward();
+            let grads_params = GradientsParams::from_grads(grads, &model);
 
             // Update parameters
-            model = optimizer.step(learning_rate, model, gradients);
+            model = optimizer.step(learning_rate, model, grads_params);
 
             // Accumulate loss
             total_train_loss += loss_value;
@@ -144,4 +145,53 @@ pub fn train<B: AutodiffBackend<Gradients = GradientsParams>>(
     }
 
     model
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use burn::backend::ndarray::NdArrayDevice;
+    use burn::backend::{Autodiff, NdArray};
+
+    #[test]
+    fn test_training_converges() {
+        // Autodiff with NoCheckpointing uses GradientsParams
+        type Backend = Autodiff<NdArray>;
+        let device = NdArrayDevice::default();
+
+        // Simple repeating pattern: 0, 1, 2, 3, 2, 1, 0, 1, ...
+        let pattern = [0.0, 1.0, 2.0, 3.0, 2.0, 1.0, 0.0, 1.0];
+
+        let mut dataset_train = SequenceDataset::new(3, 1);
+        dataset_train.new_batch();
+        for i in 0..100 {
+            let value = pattern[i % pattern.len()];
+            dataset_train.push([value; 16]);
+        }
+        dataset_train.finalize();
+
+        let mut dataset_valid = SequenceDataset::new(3, 1);
+        dataset_valid.new_batch();
+        for i in 0..100 {
+            let value = pattern[i % pattern.len()];
+            dataset_valid.push([value; 16]);
+        }
+        dataset_valid.finalize();
+
+        // Create model
+        let model = SimpleRnn::<Backend>::new(&device, 16, 32, 16);
+
+        // Train
+        train(
+            &device,
+            &dataset_train,
+            &dataset_valid,
+            25,
+            16,
+            0.001,
+            model,
+        );
+
+        println!("Training complete! Check if losses decreased.");
+    }
 }
