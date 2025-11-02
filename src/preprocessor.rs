@@ -94,6 +94,7 @@ impl ZScore {
 pub enum Node {
     Ema(Ema),
     ZScore(ZScore),
+    Noop,
 }
 
 impl Display for Node {
@@ -101,6 +102,7 @@ impl Display for Node {
         match self {
             Self::Ema(ema) => write!(f, "EMA({}, {})", ema.window, ema.alpha),
             Self::ZScore(zscore) => write!(f, "ZSCORE({})", zscore.window),
+            Self::Noop => write!(f, "NOOP()"),
         }
     }
 }
@@ -118,6 +120,7 @@ impl Node {
         match self {
             Self::Ema(ema) => ema.process(value),
             Self::ZScore(zscore) => zscore.process(value),
+            Self::Noop => Some(value),
         }
     }
 }

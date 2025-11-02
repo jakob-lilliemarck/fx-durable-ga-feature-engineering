@@ -1,8 +1,6 @@
 use burn::data::dataloader::batcher::Batcher;
 use burn::prelude::*;
 
-use crate::dataset::NUMBER_OF_SENSORS;
-
 use super::dataset::SequenceDatasetItem;
 
 #[derive(Clone, Debug)]
@@ -32,7 +30,7 @@ impl<B: Backend> Batcher<B, SequenceDatasetItem, SequenceBatch<B>> for SequenceB
         assert!(batch_size > 0, "Cannot create a batch from an empty Vec");
 
         let seq_len = items[0].sequence.len();
-        let feature_dim = NUMBER_OF_SENSORS;
+        let feature_dim = items[0].sequence[0].len();
 
         // Flatten everything
         let mut all_sequences = Vec::with_capacity(batch_size * seq_len * feature_dim);

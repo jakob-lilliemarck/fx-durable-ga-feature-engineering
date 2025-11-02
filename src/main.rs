@@ -1,11 +1,15 @@
+use crate::{
+    dataset::DatasetBuilder,
+    model::SimpleRnn,
+    parser::read_csv,
+    preprocessor::{Node, Pipeline},
+};
 use burn::backend::{Autodiff, NdArray, ndarray::NdArrayDevice};
 use clap::Parser;
-
-use crate::{loader::load_and_preprocess, model::SimpleRnn};
+use std::collections::HashMap;
 
 mod batcher;
 mod dataset;
-mod loader;
 mod model;
 mod parser;
 mod preprocessor;
@@ -65,24 +69,22 @@ struct Args {
     #[arg(long, required = true)]
     prediction_horizon: usize,
 
+    /// Batch size
+    #[clap(long, default_value_t = 8)]
+    batch_size: usize,
+
     /// Epochs
     #[clap(long, default_value_t = 100)]
     epochs: usize,
 }
 
-const PATHS: [&str; 10] = [
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch1.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch2.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch3.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch4.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch5.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch6.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch7.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch8.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch9.dat",
-    "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch10.dat",
+const PATHS: &[&str] = &[
+    "data/PRSA_Data_Aotizhongxin_20130301-20170228.csv",
+    "data/PRSA_Data_Changping_20130301-20170228.csv",
+    "data/PRSA_Data_Dingling_20130301-20170228.csv",
+    "data/PRSA_Data_Dongsi_20130301-20170228.csv",
+    "data/PRSA_Data_Guanyuan_20130301-20170228.csv",
 ];
-const SENSOR_ARRAY_LENGTH: usize = 16;
 
 fn main() -> anyhow::Result<()> {
     // Autodiff with NoCheckpointing uses GradientsParams
@@ -92,33 +94,45 @@ fn main() -> anyhow::Result<()> {
     // --- Parse CLI arguments
     let args = Args::parse();
 
-    let dataset_train = load_and_preprocess(
-        &PATHS[0..7],
-        args.sequence_length,
-        args.prediction_horizon,
-        args.ema_window,
-        args.ema_alpha,
-        args.zscore_window,
-    )?;
+    let features = &["pm2_5"];
+    let mut pipelines = HashMap::with_capacity(1);
+    pipelines.insert(
+        "pm2_5",
+        Pipeline::new([
+            Node::ema(args.ema_window, args.ema_alpha),
+            Node::zscore(args.zscore_window),
+        ]),
+    );
 
-    let dataset_valid = load_and_preprocess(
-        &PATHS[7..9],
-        args.sequence_length,
-        args.prediction_horizon,
-        args.ema_window,
-        args.ema_alpha,
-        args.zscore_window,
-    )?;
+    let mut dataset_builder = DatasetBuilder::new(pipelines, features, Some(35066));
 
-    let model = SimpleRnn::<Backend>::new(&device, 16, 32, 16);
+    // Read and push all rows
+    for result in read_csv(PATHS[0])? {
+        let row = result?;
+
+        // Create a record with the features we want
+        let mut record = HashMap::new();
+        if let Some(value) = row.pm2_5 {
+            record.insert("pm2_5".to_string(), value);
+        }
+
+        // Push to builder (skips rows where pipeline returns None)
+        dataset_builder.push(record)?;
+    }
+
+    let (dataset_training, dataset_validation) =
+        dataset_builder.build(args.sequence_length, args.prediction_horizon, 0.8)?;
+
+    let model =
+        SimpleRnn::<Backend>::new(&device, args.input_size, args.hidden_size, args.output_size);
 
     // Train
     train::train(
         &device,
-        &dataset_train,
-        &dataset_valid,
+        &dataset_training,
+        &dataset_validation,
         args.epochs,
-        SENSOR_ARRAY_LENGTH,
+        8,
         args.learning_rate,
         model,
     );

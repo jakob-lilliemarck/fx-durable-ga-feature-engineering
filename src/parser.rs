@@ -1,185 +1,196 @@
-use regex::Regex;
+use chrono::{DateTime, NaiveDate, Utc};
+use csv::{Reader, StringRecord};
 use std::fs::File;
-use std::io::{self, BufRead, BufReader};
-use std::path::Path;
-
-/// The number of sensor readings per line, each reading produce a number of values
-use crate::dataset::NUMBER_OF_SENSORS;
-
-/// The number of values per sensor reading on each line. dr, dr_abs, ema.. etc.
-const NUMBER_OF_VALUES_PER_SENSOR: u32 = 8;
+use std::io;
+use std::num::{ParseFloatError, ParseIntError};
 
 #[derive(Debug)]
-pub enum Analyte {
-    Ethanol,
-    Ethylene,
-    Ammonia,
-    Acetaldehyde,
-    Acetone,
-    Toluene,
+pub enum WindDirection {
+    N,
+    NNE,
+    NE,
+    ENE,
+    E,
+    ESE,
+    SE,
+    SSE,
+    S,
+    SSW,
+    SW,
+    WSW,
+    W,
+    WNW,
+    NW,
+    NNW,
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Unkown analyte: '{0}'")]
-pub struct UnkownAnalyte(u8);
+#[error("Unknown wind direction: {0}")]
+pub struct UnknownWindDirection(String);
 
-impl TryFrom<u8> for Analyte {
-    type Error = UnkownAnalyte;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+impl TryFrom<&str> for WindDirection {
+    type Error = UnknownWindDirection;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Analyte::Ethanol),
-            2 => Ok(Analyte::Ethylene),
-            3 => Ok(Analyte::Ammonia),
-            4 => Ok(Analyte::Acetaldehyde),
-            5 => Ok(Analyte::Acetone),
-            6 => Ok(Analyte::Toluene),
-            number => Err(UnkownAnalyte(number)),
+            "N" => Ok(WindDirection::N),
+            "NNE" => Ok(WindDirection::NNE),
+            "NE" => Ok(WindDirection::NE),
+            "ENE" => Ok(WindDirection::ENE),
+            "E" => Ok(WindDirection::E),
+            "ESE" => Ok(WindDirection::ESE),
+            "SE" => Ok(WindDirection::SE),
+            "SSE" => Ok(WindDirection::SSE),
+            "S" => Ok(WindDirection::S),
+            "SSW" => Ok(WindDirection::SSW),
+            "SW" => Ok(WindDirection::SW),
+            "WSW" => Ok(WindDirection::WSW),
+            "W" => Ok(WindDirection::W),
+            "WNW" => Ok(WindDirection::WNW),
+            "NW" => Ok(WindDirection::NW),
+            "NNW" => Ok(WindDirection::NNW),
+            _ => Err(UnknownWindDirection(value.to_string())),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct Row {
-    pub idx: usize,
-    pub gas: Analyte,
-    pub dr: [f32; NUMBER_OF_SENSORS],
-    pub dr_abs: [f32; NUMBER_OF_SENSORS],
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ParseError {
-    #[error("ParseError")]
-    ParseError(String),
-    #[error("UnknownAnalyte")]
-    UnknownAnalyte(#[from] UnkownAnalyte),
-}
-
-impl TryFrom<String> for Row {
-    type Error = ParseError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        todo!()
-    }
-}
-
-pub struct LineParser {
-    re_heading: Regex,
-    re_feature: Regex,
-}
-
-impl Default for LineParser {
-    fn default() -> Self {
-        Self::new().expect("LineParser regex compilation should not fail")
-    }
-}
-
-impl LineParser {
-    pub fn new() -> Result<Self, regex::Error> {
-        // Pattern to parse the first token only
-        let re_heading = Regex::new(r"^(\d+);([\d.]+)")?;
-
-        // Pattern to parse the feature values
-        let re_feature = Regex::new(r"(\d+):([-\d.]+)")?;
-
-        Ok(Self {
-            re_heading,
-            re_feature,
-        })
-    }
-
-    fn parse_line(&self, line: &str, idx: usize) -> Result<Row, ParseError> {
-        // Parse first token (id;value)
-        let first_cap = self
-            .re_heading
-            .captures(line)
-            .ok_or(ParseError::ParseError(
-                "Failed to parse the first token".to_string(),
-            ))?;
-
-        // Parse the analyte
-        let gas: Analyte = first_cap[1]
-            .parse::<u8>()
-            .map_err(|_| ParseError::ParseError("Failed to parse id".to_string()))?
-            .try_into()?;
-
-        let mut indexed_dr: Vec<(u32, f32)> = Vec::with_capacity(NUMBER_OF_SENSORS);
-        let mut indexed_dr_abs: Vec<(u32, f32)> = Vec::with_capacity(NUMBER_OF_SENSORS);
-        for cap in self.re_feature.captures_iter(line) {
-            let feature_idx = cap[1]
-                .parse::<u32>()
-                .map_err(|_| ParseError::ParseError("Failed to parse feature index".to_string()))?;
-
-            let feature_value = cap[2]
-                .parse::<f32>()
-                .map_err(|_| ParseError::ParseError("Failed to parse feature value".to_string()))?;
-
-            if feature_idx % NUMBER_OF_VALUES_PER_SENSOR == 1 {
-                indexed_dr.push((feature_idx, feature_value))
-            } else if feature_idx % NUMBER_OF_VALUES_PER_SENSOR == 2 {
-                indexed_dr_abs.push((feature_idx, feature_value))
-            } else {
-                // skipping over any other features
-                continue;
-            }
-        }
-
-        // Sort by index to guarantee ordering
-        indexed_dr.sort_unstable_by_key(|&(idx, _)| idx);
-        indexed_dr_abs.sort_unstable_by_key(|&(idx, _)| idx);
-
-        let dr = indexed_dr
-            .into_iter()
-            .map(|(_, value)| value)
-            .collect::<Vec<f32>>()
-            .try_into()
-            .expect("Could not convert to fixed size array");
-
-        let dr_abs = indexed_dr_abs
-            .into_iter()
-            .map(|(_, value)| value)
-            .collect::<Vec<f32>>()
-            .try_into()
-            .expect("Could not convert to fixed size array");
-
-        Ok(Row {
-            idx,
-            gas,
-            dr,
-            dr_abs,
-        })
-    }
+    pub no: u32,
+    pub timestamp: DateTime<Utc>,
+    pub station: String,
+    pub pm2_5: Option<f32>,
+    pub pm10: Option<f32>,
+    pub so2: Option<f32>,
+    pub no2: Option<f32>,
+    pub co: Option<f32>,
+    pub o3: Option<f32>,
+    pub temp: Option<f32>,
+    pub pres: Option<f32>,
+    pub dewp: Option<f32>,
+    pub rain: Option<f32>,
+    pub wd: Option<WindDirection>,
+    pub wspm: Option<f32>,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("IO Error")]
     IOError(#[from] io::Error),
-    #[error("Failed to parse file '{0}'")]
-    ParseError(#[from] ParseError),
+    #[error("Parsing error")]
+    ParseError(Box<dyn std::error::Error + Send + Sync>), // Added Send + Sync
+    #[error("Datetime error")]
+    DatetimeError {
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+    },
+    #[error("Unknown wind direction: {0}")]
+    UnknownWindDirection(#[from] UnknownWindDirection),
 }
 
-pub fn read_dat_file<P: AsRef<Path>>(path: P, parser: &LineParser) -> Result<Vec<Row>, Error> {
-    let file = File::open(path)?;
-
-    let reader = BufReader::new(file);
-
-    let mut rows = Vec::new();
-    for (idx, line) in reader.lines().enumerate() {
-        // Error out on failure
-        let line = line?;
-
-        // Skip over empty lines
-        if line.trim().is_empty() {
-            continue;
-        }
-
-        // Convert to row type
-        let row = parser.parse_line(&line, idx)?;
-
-        // Push to buffer
-        rows.push(row);
+impl From<csv::Error> for Error {
+    fn from(err: csv::Error) -> Self {
+        Error::ParseError(Box::new(err))
     }
+}
 
-    Ok(rows)
+impl From<ParseFloatError> for Error {
+    fn from(err: ParseFloatError) -> Self {
+        Error::ParseError(Box::new(err))
+    }
+}
+impl From<ParseIntError> for Error {
+    fn from(err: ParseIntError) -> Self {
+        Error::ParseError(Box::new(err))
+    }
+}
+
+pub struct RowIterator {
+    reader: Reader<File>,
+}
+
+impl RowIterator {
+    pub fn new(path: &str) -> Result<Self, Error> {
+        let file = File::open(path)?;
+
+        let reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(file);
+
+        Ok(RowIterator { reader })
+    }
+}
+
+impl Iterator for RowIterator {
+    type Item = Result<Row, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let record = match self.reader.records().next()? {
+            Ok(r) => r,
+            Err(err) => return Some(Err(Error::ParseError(Box::new(err)))),
+        };
+
+        Some(parse_row(&record))
+    }
+}
+
+fn parse_optional_f32(s: &str) -> Result<Option<f32>, Error> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("NA") {
+        Ok(None)
+    } else {
+        let value = trimmed.parse::<f32>()?;
+        Ok(Some(value))
+    }
+}
+
+fn parse_wind_direction(s: &str) -> Result<Option<WindDirection>, Error> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed == "NA" {
+        Ok(None)
+    } else {
+        Ok(Some(WindDirection::try_from(trimmed)?))
+    }
+}
+
+fn parse_row(record: &StringRecord) -> Result<Row, Error> {
+    let year: i32 = record[1].parse()?;
+    let month: u32 = record[2].parse()?;
+    let day: u32 = record[3].parse()?;
+    let hour: u32 = record[4].parse()?;
+
+    let naive_dt = NaiveDate::from_ymd_opt(year, month, day)
+        .and_then(|date| date.and_hms_opt(hour, 0, 0))
+        .ok_or(Error::DatetimeError {
+            year,
+            month,
+            day,
+            hour,
+        })?;
+
+    let timestamp = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+
+    Ok(Row {
+        no: record[0].parse()?,
+        timestamp,
+        station: record[17].to_string(),
+        pm2_5: parse_optional_f32(&record[5])?,
+        pm10: parse_optional_f32(&record[6])?,
+        so2: parse_optional_f32(&record[7])?,
+        no2: parse_optional_f32(&record[8])?,
+        co: parse_optional_f32(&record[9])?,
+        o3: parse_optional_f32(&record[10])?,
+        temp: parse_optional_f32(&record[11])?,
+        pres: parse_optional_f32(&record[12])?,
+        dewp: parse_optional_f32(&record[13])?,
+        rain: parse_optional_f32(&record[14])?,
+        wd: parse_wind_direction(&record[15])?,
+        wspm: parse_optional_f32(&record[16])?,
+    })
+}
+
+// Get an iterator over the rows of the CSV file
+pub fn read_csv(path: &str) -> Result<impl Iterator<Item = Result<Row, Error>>, Error> {
+    Ok(RowIterator::new(path)?)
 }

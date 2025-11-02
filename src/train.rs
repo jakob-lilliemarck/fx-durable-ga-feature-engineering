@@ -152,47 +152,43 @@ pub fn train<B: AutodiffBackend>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dataset::DatasetBuilder;
+    use crate::preprocessor::{Node, Pipeline};
     use burn::backend::ndarray::NdArrayDevice;
     use burn::backend::{Autodiff, NdArray};
+    use std::collections::HashMap;
 
     #[test]
     fn test_training_converges() {
-        // Autodiff with NoCheckpointing uses GradientsParams
         type Backend = Autodiff<NdArray>;
         let device = NdArrayDevice::default();
 
         // Simple repeating pattern: 0, 1, 2, 3, 2, 1, 0, 1, ...
         let pattern = [0.0, 1.0, 2.0, 3.0, 2.0, 1.0, 0.0, 1.0];
 
-        let mut dataset_train = SequenceDataset::new(3, 1);
-        dataset_train.new_batch();
+        // Create pipelines - passthrough (no preprocessing)
+        let mut pipelines = HashMap::new();
+        pipelines.insert("value", Pipeline::new([Node::Noop, Node::Noop]));
+
+        let features = &["value"];
+
+        // Build dataset
+        let mut builder = DatasetBuilder::new(pipelines, features, Some(100));
         for i in 0..100 {
             let value = pattern[i % pattern.len()];
-            dataset_train.push([value; 16]);
+            let mut record = HashMap::new();
+            record.insert("value".to_string(), value);
+            builder.push(record).unwrap();
         }
-        dataset_train.finalize();
 
-        let mut dataset_valid = SequenceDataset::new(3, 1);
-        dataset_valid.new_batch();
-        for i in 0..100 {
-            let value = pattern[i % pattern.len()];
-            dataset_valid.push([value; 16]);
-        }
-        dataset_valid.finalize();
+        // Split into train (80%) and validation (20%)
+        let (dataset_train, dataset_valid) = builder.build(4, 1, 0.8).expect("should build");
 
-        // Create model
-        let model = SimpleRnn::<Backend>::new(&device, 16, 32, 16);
+        // Create model - input_size=1 (single feature), output_size=1
+        let model = SimpleRnn::<Backend>::new(&device, 1, 64, 1);
 
         // Train
-        train(
-            &device,
-            &dataset_train,
-            &dataset_valid,
-            25,
-            16,
-            0.001,
-            model,
-        );
+        train(&device, &dataset_train, &dataset_valid, 25, 32, 0.01, model);
 
         println!("Training complete! Check if losses decreased.");
     }
