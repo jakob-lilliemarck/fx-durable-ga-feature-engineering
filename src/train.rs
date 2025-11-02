@@ -5,6 +5,7 @@ use burn::data::dataloader::Dataset;
 use burn::data::dataloader::batcher::Batcher;
 use burn::grad_clipping::GradientClippingConfig;
 use burn::module::AutodiffModule;
+use burn::optim::decay::WeightDecayConfig;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::prelude::*;
 use burn::tensor::backend::AutodiffBackend;
@@ -25,6 +26,7 @@ pub fn train<B: AutodiffBackend>(
 ) -> SimpleRnn<B> {
     // Initialize optimizer
     let mut optimizer = AdamConfig::new()
+        .with_weight_decay(Some(WeightDecayConfig::new(1e-4)))
         .with_grad_clipping(Some(GradientClippingConfig::Norm(1.0)))
         .init();
 

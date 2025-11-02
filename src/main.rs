@@ -40,7 +40,7 @@ struct Args {
     learning_rate: f64,
 
     // ============================================================
-    // Preprocessing params
+    // Dataset & Preprocessing params
     // ============================================================
     /// Ema window size
     #[clap(long, required = true)]
@@ -57,6 +57,14 @@ struct Args {
     // ============================================================
     // Training params
     // ============================================================
+    /// Sequence length
+    #[arg(long, required = true)]
+    sequence_length: usize,
+
+    /// Prediction horizon
+    #[arg(long, required = true)]
+    prediction_horizon: usize,
+
     /// Epochs
     #[clap(long, default_value_t = 100)]
     epochs: usize,
@@ -74,8 +82,6 @@ const PATHS: [&str; 10] = [
     "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch9.dat",
     "data/gas+sensor+array+drift+dataset+at+different+concentrations/batch10.dat",
 ];
-const SEQUENCE_LENGTH: usize = 10;
-const PREDICTION_HORIZON: usize = 1;
 const SENSOR_ARRAY_LENGTH: usize = 16;
 
 fn main() -> anyhow::Result<()> {
@@ -87,18 +93,18 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
     let dataset_train = load_and_preprocess(
-        &PATHS[0..4],
-        SEQUENCE_LENGTH,
-        PREDICTION_HORIZON,
+        &PATHS[0..7],
+        args.sequence_length,
+        args.prediction_horizon,
         args.ema_window,
         args.ema_alpha,
         args.zscore_window,
     )?;
 
     let dataset_valid = load_and_preprocess(
-        &PATHS[4..5],
-        SEQUENCE_LENGTH,
-        PREDICTION_HORIZON,
+        &PATHS[7..9],
+        args.sequence_length,
+        args.prediction_horizon,
         args.ema_window,
         args.ema_alpha,
         args.zscore_window,

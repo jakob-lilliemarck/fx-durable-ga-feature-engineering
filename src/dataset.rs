@@ -1,4 +1,5 @@
 use burn::data::dataset::Dataset;
+use tabled::Tabled;
 
 pub const NUMBER_OF_SENSORS: usize = 16;
 pub const NUMBER_OF_BATCHES: usize = 10;
@@ -135,14 +136,17 @@ impl SequenceDataset {
     }
 }
 
+#[derive(Tabled)]
 pub struct DatasetStats {
     pub num_batches: usize,
     pub total_sequences: usize,
     pub sequence_length: usize,
     pub prediction_horizon: usize,
+    #[tabled(skip)]
     pub batches: Vec<BatchStats>,
 }
 
+#[derive(Tabled)]
 pub struct BatchStats {
     pub batch_idx: usize,
     pub num_timesteps: usize,
