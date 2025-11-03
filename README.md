@@ -5,12 +5,20 @@ cargo install --path .
 
 ## Model training example
 ```sh
-fx-durable-ga-example-feature-engineering \
-    --input-size 16 \
+train train \
     --hidden-size 32 \
-    --output-size 16 \
     --learning-rate 0.001 \
-    --ema-window 10 \
-    --ema-alpha 0.01 \
-    --zscore-window 10
+    --sequence-length 100 \
+    --prediction-horizon 1 \
+    --batch-size 8 \
+    --epochs 100 \
+    --feature "temp_ema=TEMP:ZSCORE(100)" \
+    --feature "hour_sin=hour:SIN(24)" \
+    --feature "hour_cos=hour:COS(24)"
+
+train export \
+    --feature "temp_ema=TEMP:ZSCORE(100)" \
+    --feature "hour_sin=hour:SIN(24)" \
+    --feature "hour_cos=hour:COS(24)" \
+    --output test.csv
 ```

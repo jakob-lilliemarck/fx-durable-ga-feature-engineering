@@ -1,4 +1,66 @@
+use std::f32::consts::PI;
 use std::{collections::VecDeque, fmt::Display};
+
+#[derive(Debug, Clone)]
+pub struct Roc {
+    offset: usize,
+    buffer: VecDeque<f32>,
+}
+
+impl Roc {
+    pub fn new(offset: usize) -> Self {
+        Self {
+            offset,
+            buffer: VecDeque::with_capacity(offset + 1),
+        }
+    }
+
+    fn process(&mut self, value: f32) -> Option<f32> {
+        self.buffer.push_back(value);
+
+        // Keep only the values we need
+        if self.buffer.len() > self.offset + 1 {
+            self.buffer.pop_front();
+        }
+
+        // Need at least offset+1 values to compute ROC
+        if self.buffer.len() > self.offset {
+            Some((value - self.buffer[0]) / self.offset as f32)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Sin {
+    period: f32,
+}
+
+impl Sin {
+    pub fn new(period: f32) -> Self {
+        Self { period }
+    }
+
+    pub fn process(&mut self, value: f32) -> Option<f32> {
+        Some((2.0 * PI * value / self.period).sin())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Cos {
+    period: f32,
+}
+
+impl Cos {
+    pub fn new(period: f32) -> Self {
+        Self { period }
+    }
+
+    pub fn process(&mut self, value: f32) -> Option<f32> {
+        Some((2.0 * PI * value / self.period).cos())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Ema {
@@ -38,6 +100,38 @@ impl Ema {
             None
         } else {
             Some(self.value)
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Std {
+    window: usize,
+    buffer: VecDeque<f32>,
+}
+
+impl Std {
+    pub fn new(window_size: usize) -> Self {
+        Self {
+            window: window_size,
+            buffer: VecDeque::with_capacity(window_size),
+        }
+    }
+
+    pub fn process(&mut self, value: f32) -> Option<f32> {
+        self.buffer.push_back(value);
+
+        if self.buffer.len() > self.window {
+            self.buffer.pop_front();
+        }
+
+        if self.buffer.len() == self.window {
+            let mean: f32 = self.buffer.iter().sum::<f32>() / self.window as f32;
+            let variance: f32 =
+                self.buffer.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / self.window as f32;
+            Some(variance.sqrt())
+        } else {
+            None
         }
     }
 }
@@ -92,35 +186,166 @@ impl ZScore {
 
 #[derive(Debug, Clone)]
 pub enum Node {
+    Roc(Roc),
+    Cos(Cos),
+    Sin(Sin),
+    Std(Std),
     Ema(Ema),
     ZScore(ZScore),
-    Noop,
 }
 
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Roc(roc) => write!(f, "ROC({}", roc.offset),
+            Self::Cos(cos) => write!(f, "COS({})", cos.period),
+            Self::Sin(sin) => write!(f, "SIN({})", sin.period),
+            Self::Std(std) => write!(f, "STD({})", std.window),
             Self::Ema(ema) => write!(f, "EMA({}, {})", ema.window, ema.alpha),
             Self::ZScore(zscore) => write!(f, "ZSCORE({})", zscore.window),
-            Self::Noop => write!(f, "NOOP()"),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Unknown node: {0}")]
+    UnknownNode(String),
+    #[error("Invalid value: {0}")]
+    InvalidValue(String),
+}
+
+impl TryFrom<&str> for Node {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let value = value.trim();
+
+        let mut parts = value.split('(');
+        let node_type = parts
+            .next()
+            .ok_or_else(|| Error::InvalidValue(format!("Invalid format: {}", value)))?
+            .trim()
+            .to_uppercase();
+
+        let params = parts
+            .next()
+            .ok_or_else(|| Error::InvalidValue(format!("Missing '(' in: {}", value)))?
+            .trim_end_matches(')')
+            .trim();
+
+        match node_type.as_str() {
+            "ROC" => {
+                let offset = params
+                    .parse::<usize>()
+                    .map_err(|_| Error::InvalidValue(format!("Invalid offset, got: {}", params)))?;
+
+                if offset < 1 {
+                    return Err(Error::InvalidValue(format!(
+                        "ROC offset must be at least 1, got: {}",
+                        params
+                    )));
+                }
+
+                Ok(Node::Roc(Roc::new(offset)))
+            }
+            "COS" => {
+                let period = params
+                    .parse::<f32>()
+                    .map_err(|_| Error::InvalidValue(format!("Invalid period, got: {}", params)))?;
+
+                if period <= 0.0 {
+                    return Err(Error::InvalidValue(format!(
+                        "COS period must be larger than 0.0, got: {}",
+                        params
+                    )));
+                }
+
+                Ok(Node::Cos(Cos::new(period)))
+            }
+            "SIN" => {
+                let period = params
+                    .parse::<f32>()
+                    .map_err(|_| Error::InvalidValue(format!("Invalid period, got: {}", params)))?;
+
+                if period <= 0.0 {
+                    return Err(Error::InvalidValue(format!(
+                        "SIN period must be larger than 0.0, got: {}",
+                        params
+                    )));
+                }
+
+                Ok(Node::Sin(Sin::new(period)))
+            }
+            "STD" => {
+                let window = params
+                    .parse::<usize>()
+                    .map_err(|_| Error::InvalidValue(format!("Invalid window: {}", params)))?;
+
+                if window < 1 {
+                    return Err(Error::InvalidValue(format!(
+                        "STD window must be at least 1, got: {}",
+                        params
+                    )));
+                }
+
+                Ok(Node::Std(Std::new(window)))
+            }
+            "EMA" => {
+                let parts: Vec<&str> = params.split(',').map(|s| s.trim()).collect();
+
+                if parts.len() != 2 {
+                    return Err(Error::InvalidValue(format!(
+                        "EMA requires 2 parameters (window, alpha), got: {}",
+                        params
+                    )));
+                }
+
+                let window = parts[0]
+                    .parse::<usize>()
+                    .map_err(|_| Error::InvalidValue(format!("Invalid window: {}", parts[0])))?;
+
+                let alpha = parts[1]
+                    .parse::<f32>()
+                    .map_err(|_| Error::InvalidValue(format!("Invalid alpha: {}", parts[1])))?;
+
+                if window < 1 {
+                    return Err(Error::InvalidValue(format!(
+                        "EMA window must be at least 1, got: {}",
+                        params
+                    )));
+                }
+
+                Ok(Node::Ema(Ema::new(window, alpha)))
+            }
+            "ZSCORE" => {
+                let window = params
+                    .parse::<usize>()
+                    .map_err(|_| Error::InvalidValue(format!("Invalid window: {}", params)))?;
+
+                if window < 1 {
+                    return Err(Error::InvalidValue(format!(
+                        "ZSCORE window must be at least 1, got: {}",
+                        params
+                    )));
+                }
+
+                Ok(Node::ZScore(ZScore::new(window)))
+            }
+            _ => Err(Error::UnknownNode(node_type.to_string())),
         }
     }
 }
 
 impl Node {
-    pub fn ema(window: usize, alpha: f32) -> Self {
-        Self::Ema(Ema::new(window, alpha))
-    }
-
-    pub fn zscore(window: usize) -> Self {
-        Self::ZScore(ZScore::new(window))
-    }
-
     pub fn process(&mut self, value: f32) -> Option<f32> {
         match self {
+            Self::Roc(roc) => roc.process(value),
+            Self::Cos(cos) => cos.process(value),
+            Self::Sin(sin) => sin.process(value),
+            Self::Std(std) => std.process(value),
             Self::Ema(ema) => ema.process(value),
             Self::ZScore(zscore) => zscore.process(value),
-            Self::Noop => Some(value),
         }
     }
 }
@@ -128,11 +353,11 @@ impl Node {
 // A simple pipeline with two preprocessing steps
 #[derive(Debug, Clone)]
 pub struct Pipeline {
-    pub(crate) nodes: [Node; 2],
+    pub(crate) nodes: Vec<Node>,
 }
 
 impl Pipeline {
-    pub fn new(nodes: [Node; 2]) -> Self {
+    pub fn new(nodes: Vec<Node>) -> Self {
         Self { nodes }
     }
 

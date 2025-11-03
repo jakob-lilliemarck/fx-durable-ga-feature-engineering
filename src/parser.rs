@@ -1,4 +1,3 @@
-use chrono::{DateTime, NaiveDate, Utc};
 use csv::{Reader, StringRecord};
 use std::fs::File;
 use std::io;
@@ -56,7 +55,8 @@ impl TryFrom<&str> for WindDirection {
 #[derive(Debug)]
 pub struct Row {
     pub no: u32,
-    pub timestamp: DateTime<Utc>,
+    pub day: f32,
+    pub hour: f32,
     pub station: String,
     pub pm2_5: Option<f32>,
     pub pm10: Option<f32>,
@@ -77,14 +77,7 @@ pub enum Error {
     #[error("IO Error")]
     IOError(#[from] io::Error),
     #[error("Parsing error")]
-    ParseError(Box<dyn std::error::Error + Send + Sync>), // Added Send + Sync
-    #[error("Datetime error")]
-    DatetimeError {
-        year: i32,
-        month: u32,
-        day: u32,
-        hour: u32,
-    },
+    ParseError(Box<dyn std::error::Error + Send + Sync>),
     #[error("Unknown wind direction: {0}")]
     UnknownWindDirection(#[from] UnknownWindDirection),
 }
@@ -100,6 +93,7 @@ impl From<ParseFloatError> for Error {
         Error::ParseError(Box::new(err))
     }
 }
+
 impl From<ParseIntError> for Error {
     fn from(err: ParseIntError) -> Self {
         Error::ParseError(Box::new(err))
@@ -155,25 +149,14 @@ fn parse_wind_direction(s: &str) -> Result<Option<WindDirection>, Error> {
 }
 
 fn parse_row(record: &StringRecord) -> Result<Row, Error> {
-    let year: i32 = record[1].parse()?;
-    let month: u32 = record[2].parse()?;
-    let day: u32 = record[3].parse()?;
-    let hour: u32 = record[4].parse()?;
-
-    let naive_dt = NaiveDate::from_ymd_opt(year, month, day)
-        .and_then(|date| date.and_hms_opt(hour, 0, 0))
-        .ok_or(Error::DatetimeError {
-            year,
-            month,
-            day,
-            hour,
-        })?;
-
-    let timestamp = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+    // Parse day and hour as f32 directly
+    let day: f32 = record[3].parse()?;
+    let hour: f32 = record[4].parse()?;
 
     Ok(Row {
         no: record[0].parse()?,
-        timestamp,
+        day,
+        hour,
         station: record[17].to_string(),
         pm2_5: parse_optional_f32(&record[5])?,
         pm10: parse_optional_f32(&record[6])?,

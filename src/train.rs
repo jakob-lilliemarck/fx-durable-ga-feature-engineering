@@ -1,6 +1,6 @@
 use crate::batcher::SequenceBatcher;
 use crate::dataset::SequenceDataset;
-use crate::model::SimpleRnn;
+use crate::model::{SimpleLstm, SimpleRnn};
 use burn::data::dataloader::Dataset;
 use burn::data::dataloader::batcher::Batcher;
 use burn::grad_clipping::GradientClippingConfig;
@@ -22,8 +22,8 @@ pub fn train<B: AutodiffBackend>(
     epochs: usize,
     batch_size: usize,
     learning_rate: f64,
-    mut model: SimpleRnn<B>,
-) -> SimpleRnn<B> {
+    mut model: SimpleLstm<B>,
+) -> SimpleLstm<B> {
     // Initialize optimizer
     let mut optimizer = AdamConfig::new()
         .with_weight_decay(Some(WeightDecayConfig::new(1e-4)))
@@ -40,7 +40,7 @@ pub fn train<B: AutodiffBackend>(
     // Early stopping variables
     let mut best_valid_loss = f32::INFINITY;
     let mut epochs_without_improvement = 0;
-    let patience = 10; // Stop if no improvement for 10 epochs
+    let patience = 20; // Stop if no improvement for n epochs
 
     for epoch in 0..epochs {
         // ============ Training Loop ============
@@ -153,6 +153,7 @@ pub fn train<B: AutodiffBackend>(
 mod tests {
     use super::*;
     use crate::dataset::DatasetBuilder;
+    use crate::model::SimpleLstm;
     use crate::preprocessor::{Node, Pipeline};
     use burn::backend::ndarray::NdArrayDevice;
     use burn::backend::{Autodiff, NdArray};
@@ -168,12 +169,14 @@ mod tests {
 
         // Create pipelines - passthrough (no preprocessing)
         let mut pipelines = HashMap::new();
-        pipelines.insert("value", Pipeline::new([Node::Noop, Node::Noop]));
+        pipelines.insert("value".to_string(), Pipeline::new(vec![]));
 
-        let features = &["value"];
+        let output_names = vec!["value".to_string()];
+        let source_columns = vec!["value".to_string()];
 
         // Build dataset
-        let mut builder = DatasetBuilder::new(pipelines, features, Some(100));
+        let mut builder = DatasetBuilder::new(pipelines, output_names, source_columns, Some(100));
+
         for i in 0..100 {
             let value = pattern[i % pattern.len()];
             let mut record = HashMap::new();
@@ -185,7 +188,7 @@ mod tests {
         let (dataset_train, dataset_valid) = builder.build(4, 1, 0.8).expect("should build");
 
         // Create model - input_size=1 (single feature), output_size=1
-        let model = SimpleRnn::<Backend>::new(&device, 1, 64, 1);
+        let model = SimpleLstm::<Backend>::new(&device, 1, 64, 1);
 
         // Train
         train(&device, &dataset_train, &dataset_valid, 25, 32, 0.01, model);

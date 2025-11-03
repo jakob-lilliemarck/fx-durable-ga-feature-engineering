@@ -42,3 +42,37 @@ impl<B: Backend> SimpleRnn<B> {
         self.linear_out.forward(h)
     }
 }
+
+#[derive(Module, Debug)]
+pub struct SimpleLstm<B: Backend> {
+    lstm: nn::Lstm<B>,
+    linear_out: nn::Linear<B>,
+}
+
+impl<B: Backend> SimpleLstm<B> {
+    pub fn new(
+        device: &B::Device,
+        input_size: usize,
+        hidden_size: usize,
+        output_size: usize,
+    ) -> Self {
+        Self {
+            lstm: nn::LstmConfig::new(input_size, hidden_size, true).init(device),
+            linear_out: nn::LinearConfig::new(hidden_size, output_size).init(device),
+        }
+    }
+
+    pub fn forward(&self, input: Tensor<B, 3>) -> Tensor<B, 2> {
+        // Forward pass through LSTM
+        let (output, _state) = self.lstm.forward(input, None);
+        let seq_len = output.dims()[1];
+
+        let last_index = Tensor::<B, 1, Int>::from_data([seq_len as i32 - 1], &output.device());
+
+        // Select last time step and remove singleton dimension
+        let last_step = output.select(1, last_index).squeeze_dim(1); // only remove seq dim
+
+        // Linear projection to output size
+        self.linear_out.forward(last_step)
+    }
+}
