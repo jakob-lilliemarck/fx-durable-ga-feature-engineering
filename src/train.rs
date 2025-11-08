@@ -1,8 +1,6 @@
-use std::time::Instant;
-
 use crate::batcher::SequenceBatcher;
 use crate::dataset::SequenceDataset;
-use crate::model::SimpleLstm;
+use crate::model::SequenceModel;
 use burn::data::dataloader::Dataset;
 use burn::data::dataloader::batcher::Batcher;
 use burn::grad_clipping::GradientClippingConfig;
@@ -12,15 +10,20 @@ use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::prelude::*;
 use burn::tensor::backend::AutodiffBackend;
 
-pub fn train<B: AutodiffBackend>(
+pub fn train<B, M>(
     device: &B::Device,
     dataset_training: &SequenceDataset,
     dataset_validation: &SequenceDataset,
     epochs: usize,
     batch_size: usize,
     learning_rate: f64,
-    mut model: SimpleLstm<B>,
-) -> SimpleLstm<B> {
+    mut model: M,
+) -> M
+where
+    B: AutodiffBackend,
+    M: SequenceModel<B> + AutodiffModule<B>,
+    M::InnerModule: SequenceModel<B::InnerBackend>,
+{
     // Initialize optimizer
     let mut optimizer = AdamConfig::new()
         .with_weight_decay(Some(WeightDecayConfig::new(1e-4)))
@@ -43,8 +46,6 @@ pub fn train<B: AutodiffBackend>(
         // ============ Training Loop ============
         let mut total_train_loss = 0.0;
         let mut num_train_batches = 0;
-
-        let mut ts = Instant::now();
 
         for start_idx in (0..dataset_train_len).step_by(batch_size) {
             let end_idx = (start_idx + batch_size).min(dataset_train_len);
@@ -76,12 +77,6 @@ pub fn train<B: AutodiffBackend>(
 
             // Update parameters - this consumes the gradients
             model = optimizer.step(learning_rate, model, grads_params);
-
-            if num_train_batches % 100 == 0 {
-                let elapsed = ts.elapsed();
-                println!("Batch {}: dataset={:?}", num_train_batches, elapsed);
-                ts = Instant::now();
-            }
 
             total_train_loss += loss_value;
             num_train_batches += 1;
@@ -195,8 +190,8 @@ mod tests {
         // Split into train (80%) and validation (20%)
         let (dataset_train, dataset_valid) = builder.build(4, 1, 0.8).expect("should build");
 
-        // Create model - input_size=1 (single feature), output_size=1
-        let model = SimpleLstm::<Backend>::new(&device, 1, 64, 1);
+        // Create model - input_size=1 (single feature), output_size=1, seq_len=4
+        let model = SimpleLstm::<Backend>::new(&device, 1, 64, 1, 4);
 
         // Train
         train(&device, &dataset_train, &dataset_valid, 25, 32, 0.01, model);

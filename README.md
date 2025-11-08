@@ -15,8 +15,8 @@ cargo run train \
     --learning-rate 0.001 \
     --sequence-length 24 \
     --prediction-horizon 1 \
-    --batch-size 8 \
-    --epochs 20 \
+    --batch-size 64 \
+    --epochs 50 \
     --feature "temp_ema=TEMP:ZSCORE(100)" \
     --feature "hour_sin=hour:SIN(24)" \
     --feature "hour_cos=hour:COS(24)"

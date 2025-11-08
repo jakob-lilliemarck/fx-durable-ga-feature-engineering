@@ -1,6 +1,6 @@
 use crate::{
     dataset::DatasetBuilder,
-    model::SimpleLstm,
+    model::{FeedForward, SequenceModel, SimpleLstm, SimpleRnn},
     parser::read_csv,
     preprocessor::{Node, Pipeline},
 };
@@ -226,8 +226,16 @@ fn main() -> anyhow::Result<()> {
             let (dataset_training, dataset_validation) =
                 dataset_builder.build(sequence_length, prediction_horizon, 0.8)?;
 
-            let model =
-                SimpleLstm::<Backend>::new(&device, feature_length, hidden_size, feature_length);
+            // Choose model architecture:
+            let model = FeedForward::<Backend>::new(
+                &device,
+                feature_length,
+                hidden_size,
+                feature_length,
+                sequence_length,
+            );
+            // let model = SimpleRnn::<Backend>::new(&device, feature_length, hidden_size, feature_length, sequence_length);
+            // let model = SimpleLstm::<Backend>::new(&device, feature_length, hidden_size, feature_length, sequence_length);
 
             // Train
             train::train(
