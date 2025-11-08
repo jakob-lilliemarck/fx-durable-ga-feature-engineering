@@ -12,8 +12,8 @@ cargo install --path .
 ```sh
 cargo run -- train \
     --hidden-size 64 \
-    --learning-rate 0.0003 \
-    --sequence-length 24 \
+    --learning-rate 0.0001 \
+    --sequence-length 48 \
     --prediction-horizon 1 \
     --batch-size 64 \
     --epochs 100 \
@@ -26,7 +26,7 @@ cargo run -- train \
     --feature "pres_roc_4=PRES:ROC(4) ZSCORE(48)" \
     --feature "hour_sin=hour:SIN(24)" \
     --feature "hour_cos=hour:COS(24)" \
-    --target "target_temp=TEMP"
+    --target "target_temp=PRES"
 
 feng export \
     --feature "temp_ema=TEMP:ZSCORE(100)" \
@@ -34,3 +34,41 @@ feng export \
     --feature "hour_cos=hour:COS(24)" \
     --output test.csv
 ```
+
+## Targets
+
+### Single Target (Recommended)
+
+For simplicity and interpretability, use one target per model with **raw, unnormalized values**:
+
+```sh
+--target "target_temp=TEMP"
+```
+
+**Advantages:**
+- Predictions are directly interpretable (no denormalization needed)
+- No distribution shift issues between training and inference
+- Simpler to reason about model performance
+- Each model can be optimized independently for its specific task
+
+**Note:** Loss values will be larger for raw targets (e.g., MSE ~80 for temperature in °C), but this is expected and doesn't affect model quality.
+
+### Multiple Targets (Advanced)
+
+The model supports predicting multiple targets simultaneously. The loss function (MSE) averages errors across all targets:
+
+```rust
+loss = mean(squared_errors_for_all_targets)
+```
+
+**Important considerations:**
+
+1. **Scale imbalance:** Targets with different scales (e.g., temperature in °C and pressure in hPa) will cause the larger-scale target to dominate the loss. You must normalize targets to similar scales.
+
+2. **ZSCORE normalization issues:** Rolling window ZSCORE (e.g., ZSCORE(48)) creates distribution shift problems:
+   - Summer temps: mean=26°C, std=1.3 → z-score=+1.0 means "slightly warm"
+   - Winter temps: mean=-2°C, std=2.1 → z-score=+1.0 means "very warm"
+   - Model learns z-score patterns that don't transfer across seasons
+   - Denormalization requires maintaining a rolling buffer of recent target values
+
+**Recommendation:** Use separate single-target models instead of multi-target models unless you specifically need joint predictions and are willing to handle the complexity.

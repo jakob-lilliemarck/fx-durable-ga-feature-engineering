@@ -1,12 +1,9 @@
 use crate::{
     dataset::DatasetBuilder,
-    model::{FeedForward, SequenceModel, SimpleLstm, SimpleRnn},
+    model::{FeedForward, SequenceModel},
     parser::read_csv,
     preprocessor::{Node, Pipeline},
 };
-// use burn::backend::{Candle, candle::CandleDevice};
-// use burn::backend::{LibTorch, libtorch::LibTorchDevice};
-// use burn::backend::{Wgpu, wgpu::WgpuDevice};
 use burn::backend::Autodiff;
 use burn::backend::{NdArray, ndarray::NdArrayDevice};
 use clap::{Parser, Subcommand};
@@ -25,6 +22,13 @@ const PATHS: &[&str] = &[
     "data/PRSA_Data_Dingling_20130301-20170228.csv",
     "data/PRSA_Data_Dongsi_20130301-20170228.csv",
     "data/PRSA_Data_Guanyuan_20130301-20170228.csv",
+    "data/PRSA_Data_Gucheng_20130301-20170228.csv",
+    "data/PRSA_Data_Huairou_20130301-20170228.csv",
+    "data/PRSA_Data_Nongzhanguan_20130301-20170228.csv",
+    "data/PRSA_Data_Shunyi_20130301-20170228.csv",
+    "data/PRSA_Data_Tiantan_20130301-20170228.csv",
+    "data/PRSA_Data_Wanliu_20130301-20170228.csv",
+    "data/PRSA_Data_Wanshouxigong_20130301-20170228.csv",
 ];
 
 const VALID_COLUMNS: &[&str] = &[
@@ -262,15 +266,6 @@ mod tests {
 fn main() -> anyhow::Result<()> {
     type Backend = Autodiff<NdArray>;
     let device = NdArrayDevice::default();
-
-    // type Backend = Autodiff<LibTorch>;
-    // let device = LibTorchDevice::Cpu;
-
-    // type Backend = Autodiff<Wgpu>;
-    // let device = WgpuDevice::default();
-
-    // type Backend = Autodiff<Candle>;
-    // let device = CandleDevice::Cpu;
 
     let args = Args::parse();
 
