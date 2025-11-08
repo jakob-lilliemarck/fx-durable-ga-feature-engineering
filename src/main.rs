@@ -6,8 +6,10 @@ use crate::{
 };
 use burn::backend::Autodiff;
 use burn::backend::{NdArray, ndarray::NdArrayDevice};
+use burn::data::dataloader::Dataset;
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
+use tracing::info;
 
 mod batcher;
 mod dataset;
@@ -32,8 +34,8 @@ const PATHS: &[&str] = &[
 ];
 
 const VALID_COLUMNS: &[&str] = &[
-    "day", "hour", "PM2.5", "PM10", "SO2", "NO2", "CO", "O3", "TEMP", "PRES", "DEWP", "RAIN", "wd",
-    "WSPM",
+    "day", "hour", "month", "PM2.5", "PM10", "SO2", "NO2", "CO", "O3", "TEMP", "PRES", "DEWP",
+    "RAIN", "wd", "WSPM",
 ];
 
 /// Parse a single key-value pair with optional pipeline
@@ -151,30 +153,31 @@ enum Command {
     },
 }
 
-fn build_dataset(
-    features: Vec<(String, String, Pipeline)>,
-    targets: Vec<(String, String, Pipeline)>,
+fn build_dataset_from_file(
+    path: &str,
+    features: &[(String, String, Pipeline)],
+    targets: &[(String, String, Pipeline)],
 ) -> anyhow::Result<DatasetBuilder> {
-    // Process features
+    // Process features (clone pipelines for each file)
     let mut feature_pipelines = HashMap::with_capacity(features.len());
     let mut feature_output_names = Vec::with_capacity(features.len());
     let mut feature_source_columns = Vec::with_capacity(features.len());
 
     for (output_name, source_column, pipeline) in features {
-        feature_pipelines.insert(output_name.clone(), pipeline);
-        feature_output_names.push(output_name);
-        feature_source_columns.push(source_column);
+        feature_pipelines.insert(output_name.clone(), pipeline.clone());
+        feature_output_names.push(output_name.clone());
+        feature_source_columns.push(source_column.clone());
     }
 
-    // Process targets
+    // Process targets (clone pipelines for each file)
     let mut target_pipelines = HashMap::with_capacity(targets.len());
     let mut target_output_names = Vec::with_capacity(targets.len());
     let mut target_source_columns = Vec::with_capacity(targets.len());
 
     for (output_name, source_column, pipeline) in targets {
-        target_pipelines.insert(output_name.clone(), pipeline);
-        target_output_names.push(output_name);
-        target_source_columns.push(source_column);
+        target_pipelines.insert(output_name.clone(), pipeline.clone());
+        target_output_names.push(output_name.clone());
+        target_source_columns.push(source_column.clone());
     }
 
     // Collect all unique source columns needed
@@ -195,8 +198,8 @@ fn build_dataset(
         Some(35066),
     );
 
-    // Read and push all rows
-    for result in read_csv(PATHS[0])? {
+    // Read and push all rows from specified file
+    for result in read_csv(path)? {
         let row = result?;
 
         // Create a record with ALL the source columns needed
@@ -216,6 +219,7 @@ fn build_dataset(
                 "WSPM" => row.wspm,
                 "hour" => Some(row.hour as f32),
                 "day" => Some(row.day as f32),
+                "month" => Some(row.month as f32),
                 "wd" => None, // String field, handle separately if needed
                 _ => None,
             };
@@ -264,6 +268,15 @@ mod tests {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .pretty()
+        .init();
+
     type Backend = Autodiff<NdArray>;
     let device = NdArrayDevice::default();
 
@@ -282,10 +295,43 @@ fn main() -> anyhow::Result<()> {
         } => {
             let feature_length = features.len();
             let target_length = targets.len();
-            let dataset_builder = build_dataset(features, targets)?;
 
-            let (dataset_training, dataset_validation) =
-                dataset_builder.build(sequence_length, prediction_horizon, 0.8)?;
+            // Load data from all weather stations and combine their sequences
+            let mut all_train_items = Vec::new();
+            let mut all_valid_items = Vec::new();
+
+            for (i, path) in PATHS.iter().enumerate() {
+                info!(
+                    message = format!("Loading file [{}/{}]", i + 1, PATHS.len()),
+                    station = path,
+                    path
+                );
+
+                let dataset_builder = build_dataset_from_file(path, &features, &targets)?;
+                let (train, valid) =
+                    dataset_builder.build(sequence_length, prediction_horizon, 0.8)?;
+
+                let train_len = train.len();
+                let valid_len = valid.len();
+
+                // Collect items from this station
+                for idx in 0..train_len {
+                    all_train_items.push(train.get(idx).unwrap());
+                }
+                for idx in 0..valid_len {
+                    all_valid_items.push(valid.get(idx).unwrap());
+                }
+            }
+
+            info!(
+                message = "Loading and preprocessing completed",
+                training_sequences = all_train_items.len(),
+                validation_sequences = all_valid_items.len()
+            );
+
+            // Create combined datasets
+            let dataset_training = dataset::SequenceDataset::from_items(all_train_items);
+            let dataset_validation = dataset::SequenceDataset::from_items(all_valid_items);
 
             // Choose model architecture:
             let model = FeedForward::<Backend>::new(
@@ -311,8 +357,8 @@ fn main() -> anyhow::Result<()> {
         }
 
         Command::Export { features, output } => {
-            // For export, use features as both features and targets
-            let dataset_builder = build_dataset(features.clone(), features)?;
+            // For export, use features as both features and targets from first station
+            let dataset_builder = build_dataset_from_file(PATHS[0], &features, &features)?;
             dataset_builder.to_csv(&output)?;
             println!("Preprocessed dataset exported to: {}", output);
         }

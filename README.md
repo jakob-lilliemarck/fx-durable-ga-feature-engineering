@@ -15,8 +15,8 @@ cargo run -- train \
     --learning-rate 0.0001 \
     --sequence-length 48 \
     --prediction-horizon 1 \
-    --batch-size 64 \
-    --epochs 100 \
+    --batch-size 100 \
+    --epochs 25 \
     --feature "temp_zscore=TEMP:ZSCORE(48)" \
     --feature "temp=TEMP:ZSCORE(48)" \
     --feature "temp_roc_1=TEMP:ROC(1) ZSCORE(48)" \
@@ -26,7 +26,9 @@ cargo run -- train \
     --feature "pres_roc_4=PRES:ROC(4) ZSCORE(48)" \
     --feature "hour_sin=hour:SIN(24)" \
     --feature "hour_cos=hour:COS(24)" \
-    --target "target_temp=PRES"
+    --feature "month_sin=month:SIN(12)" \
+    --feature "month_cos=month:COS(12)" \
+    --target "target_temp=TEMP"
 
 feng export \
     --feature "temp_ema=TEMP:ZSCORE(100)" \

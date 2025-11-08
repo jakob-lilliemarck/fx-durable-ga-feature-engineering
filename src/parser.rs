@@ -55,6 +55,7 @@ impl TryFrom<&str> for WindDirection {
 #[derive(Debug)]
 pub struct Row {
     pub no: u32,
+    pub month: f32,
     pub day: f32,
     pub hour: f32,
     pub station: String,
@@ -150,11 +151,13 @@ fn parse_wind_direction(s: &str) -> Result<Option<WindDirection>, Error> {
 
 fn parse_row(record: &StringRecord) -> Result<Row, Error> {
     // Parse day and hour as f32 directly
+    let month: f32 = record[2].parse()?;
     let day: f32 = record[3].parse()?;
     let hour: f32 = record[4].parse()?;
 
     Ok(Row {
         no: record[0].parse()?,
+        month,
         day,
         hour,
         station: record[17].to_string(),

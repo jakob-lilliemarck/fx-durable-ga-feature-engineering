@@ -183,6 +183,24 @@ impl DatasetBuilder {
     }
 }
 
+/// A single, self-contained training example.
+///
+/// Each item represents a complete sequence-to-target mapping and is independent
+/// of all other items. This means:
+/// - All timesteps in `sequence` must come from the same continuous time series
+///   (e.g., same weather station, no gaps)
+/// - The `target` must be the natural continuation of that sequence
+/// - Items from different sources (stations, time periods) can be safely mixed
+///   in the same dataset/batch
+///
+/// # Example
+/// Valid batch composition:
+/// - Item 0: Station A, hours 100-123 → predict hour 124
+/// - Item 1: Station B, hours 50-73 → predict hour 74
+/// - Item 2: Station A, hours 200-223 → predict hour 224
+///
+/// Each item is internally consistent, so mixing them doesn't create artificial
+/// sequences that span different contexts.
 #[derive(Clone)]
 pub struct SequenceDatasetItem {
     pub sequence: Vec<Timestep>,
@@ -217,6 +235,15 @@ impl SequenceDataset {
             items.push(SequenceDatasetItem { sequence, target });
         }
 
+        Self { items }
+    }
+
+    /// Build dataset from pre-created items.
+    /// 
+    /// This is useful for combining items from multiple sources (e.g., different
+    /// weather stations) where each source creates its own internally-consistent
+    /// sequences, but they can be safely mixed for training.
+    pub fn from_items(items: Vec<SequenceDatasetItem>) -> Self {
         Self { items }
     }
 }
