@@ -28,11 +28,12 @@ impl<B: Backend> Batcher<B, SequenceDatasetItem, SequenceBatch<B>> for SequenceB
 
         let seq_len = items[0].sequence.len();
         let feature_dim = items[0].sequence[0].len();
+        let target_dim = items[0].target.len();
 
         // Pre-allocate with exact capacity - this is the key optimization!
         // No reallocations = much faster and no memory fragmentation
         let total_seq_elements = batch_size * seq_len * feature_dim;
-        let total_target_elements = batch_size * feature_dim;
+        let total_target_elements = batch_size * target_dim;
 
         let mut all_sequences = Vec::with_capacity(total_seq_elements);
         let mut all_targets = Vec::with_capacity(total_target_elements);
@@ -52,7 +53,7 @@ impl<B: Backend> Batcher<B, SequenceDatasetItem, SequenceBatch<B>> for SequenceB
         );
 
         let targets = Tensor::<B, 2>::from_data(
-            TensorData::new(all_targets, [batch_size, feature_dim]),
+            TensorData::new(all_targets, [batch_size, target_dim]),
             device,
         );
 

@@ -32,9 +32,9 @@ const VALID_COLUMNS: &[&str] = &[
     "WSPM",
 ];
 
-/// Parse a single key-value pair with pipeline
-/// Format: output_name=source_column:TRANSFORM1,TRANSFORM2,...
-/// If no colon, source_column defaults to output_name
+/// Parse a single key-value pair with optional pipeline
+/// Format: output_name=source_column:TRANSFORM1 TRANSFORM2 ...
+/// Or:     output_name=source_column  (no preprocessing)
 fn parse_feature_pipeline(
     s: &str,
 ) -> Result<(String, String, Pipeline), Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -44,12 +44,12 @@ fn parse_feature_pipeline(
     let output_name = s[..pos].to_string();
     let rest = &s[pos + 1..];
 
-    // Check if source column is specified with colon
+    // Check if preprocessing is specified with colon
     let (source_column, pipeline_str) = if let Some(colon_pos) = rest.find(':') {
         (rest[..colon_pos].to_string(), &rest[colon_pos + 1..])
     } else {
-        // If no colon, source column = output name (backwards compatible)
-        (output_name.clone(), rest)
+        // If no colon, no preprocessing - just use the source column directly
+        (rest.to_string(), "")
     };
 
     // Validate source column name
@@ -107,9 +107,13 @@ enum Command {
         // ============================================================
         // Dataset & Preprocessing params
         // ============================================================
-        /// Feature pipelines as key=value pairs (e.g., PM2.5=PM2.5:ROC(1),ZSCORE(100) or hour_sin=hour:SIN(24))
+        /// Feature pipelines as key=value pairs (e.g., temp_ema=TEMP:ZSCORE(100) or hour_sin=hour:SIN(24))
         #[clap(long = "feature", value_parser = parse_feature_pipeline)]
         features: Vec<(String, String, Pipeline)>,
+
+        /// Target pipelines as key=value pairs (e.g., target_temp=TEMP or target_pm25=PM2.5:ZSCORE(100))
+        #[clap(long = "target", value_parser = parse_feature_pipeline)]
+        targets: Vec<(String, String, Pipeline)>,
 
         // ============================================================
         // Training params
@@ -143,28 +147,57 @@ enum Command {
     },
 }
 
-fn build_dataset(features: Vec<(String, String, Pipeline)>) -> anyhow::Result<DatasetBuilder> {
-    let feature_length = features.len();
-    let mut pipelines = HashMap::with_capacity(feature_length);
-    let mut output_names = Vec::with_capacity(feature_length);
-    let mut source_columns = Vec::with_capacity(feature_length);
+fn build_dataset(
+    features: Vec<(String, String, Pipeline)>,
+    targets: Vec<(String, String, Pipeline)>,
+) -> anyhow::Result<DatasetBuilder> {
+    // Process features
+    let mut feature_pipelines = HashMap::with_capacity(features.len());
+    let mut feature_output_names = Vec::with_capacity(features.len());
+    let mut feature_source_columns = Vec::with_capacity(features.len());
 
     for (output_name, source_column, pipeline) in features {
-        pipelines.insert(output_name.clone(), pipeline);
-        output_names.push(output_name);
-        source_columns.push(source_column);
+        feature_pipelines.insert(output_name.clone(), pipeline);
+        feature_output_names.push(output_name);
+        feature_source_columns.push(source_column);
     }
 
-    let mut dataset_builder =
-        DatasetBuilder::new(pipelines, output_names, source_columns.clone(), Some(35066));
+    // Process targets
+    let mut target_pipelines = HashMap::with_capacity(targets.len());
+    let mut target_output_names = Vec::with_capacity(targets.len());
+    let mut target_source_columns = Vec::with_capacity(targets.len());
+
+    for (output_name, source_column, pipeline) in targets {
+        target_pipelines.insert(output_name.clone(), pipeline);
+        target_output_names.push(output_name);
+        target_source_columns.push(source_column);
+    }
+
+    // Collect all unique source columns needed
+    let mut all_source_columns = feature_source_columns.clone();
+    for col in &target_source_columns {
+        if !all_source_columns.contains(col) {
+            all_source_columns.push(col.clone());
+        }
+    }
+
+    let mut dataset_builder = DatasetBuilder::new(
+        feature_pipelines,
+        feature_output_names,
+        feature_source_columns,
+        target_pipelines,
+        target_output_names,
+        target_source_columns,
+        Some(35066),
+    );
 
     // Read and push all rows
     for result in read_csv(PATHS[0])? {
         let row = result?;
 
-        // Create a record with ALL the source columns (not output names)
+        // Create a record with ALL the source columns needed
         let mut record = HashMap::new();
-        for source_column in &source_columns {
+        for source_column in &all_source_columns {
             let value = match source_column.as_str() {
                 "PM2.5" => row.pm2_5,
                 "PM10" => row.pm10,
@@ -195,6 +228,37 @@ fn build_dataset(features: Vec<(String, String, Pipeline)>) -> anyhow::Result<Da
     Ok(dataset_builder)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_feature_with_preprocessing() {
+        let result = parse_feature_pipeline("output=TEMP:ZSCORE(10)");
+        assert!(result.is_ok());
+        let (output_name, source_column, pipeline) = result.unwrap();
+        assert_eq!(output_name, "output");
+        assert_eq!(source_column, "TEMP");
+        assert_eq!(pipeline.nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_feature_without_preprocessing() {
+        let result = parse_feature_pipeline("target_temp=TEMP");
+        assert!(result.is_ok());
+        let (output_name, source_column, pipeline) = result.unwrap();
+        assert_eq!(output_name, "target_temp");
+        assert_eq!(source_column, "TEMP");
+        assert_eq!(pipeline.nodes.len(), 0); // No preprocessing
+    }
+
+    #[test]
+    fn test_parse_feature_invalid_column() {
+        let result = parse_feature_pipeline("output=INVALID_COL");
+        assert!(result.is_err());
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     type Backend = Autodiff<NdArray>;
     let device = NdArrayDevice::default();
@@ -215,13 +279,15 @@ fn main() -> anyhow::Result<()> {
             hidden_size,
             learning_rate,
             features,
+            targets,
             sequence_length,
             prediction_horizon,
             batch_size,
             epochs,
         } => {
             let feature_length = features.len();
-            let dataset_builder = build_dataset(features)?;
+            let target_length = targets.len();
+            let dataset_builder = build_dataset(features, targets)?;
 
             let (dataset_training, dataset_validation) =
                 dataset_builder.build(sequence_length, prediction_horizon, 0.8)?;
@@ -231,11 +297,11 @@ fn main() -> anyhow::Result<()> {
                 &device,
                 feature_length,
                 hidden_size,
-                feature_length,
+                target_length,
                 sequence_length,
             );
-            // let model = SimpleRnn::<Backend>::new(&device, feature_length, hidden_size, feature_length, sequence_length);
-            // let model = SimpleLstm::<Backend>::new(&device, feature_length, hidden_size, feature_length, sequence_length);
+            // let model = SimpleRnn::<Backend>::new(&device, feature_length, hidden_size, target_length, sequence_length);
+            // let model = SimpleLstm::<Backend>::new(&device, feature_length, hidden_size, target_length, sequence_length);
 
             // Train
             train::train(
@@ -250,7 +316,8 @@ fn main() -> anyhow::Result<()> {
         }
 
         Command::Export { features, output } => {
-            let dataset_builder = build_dataset(features)?;
+            // For export, use features as both features and targets
+            let dataset_builder = build_dataset(features.clone(), features)?;
             dataset_builder.to_csv(&output)?;
             println!("Preprocessed dataset exported to: {}", output);
         }

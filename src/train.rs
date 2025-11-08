@@ -26,7 +26,7 @@ where
 {
     // Initialize optimizer
     let mut optimizer = AdamConfig::new()
-        .with_weight_decay(Some(WeightDecayConfig::new(1e-4)))
+        .with_weight_decay(Some(WeightDecayConfig::new(5e-4)))
         .with_grad_clipping(Some(GradientClippingConfig::Norm(1.0)))
         .init();
 
@@ -157,7 +157,7 @@ mod tests {
     use super::*;
     use crate::dataset::DatasetBuilder;
     use crate::model::SimpleLstm;
-    use crate::preprocessor::{Node, Pipeline};
+    use crate::preprocessor::Pipeline;
     use burn::backend::ndarray::NdArrayDevice;
     use burn::backend::{Autodiff, NdArray};
     use std::collections::HashMap;
@@ -171,14 +171,26 @@ mod tests {
         let pattern = [0.0, 1.0, 2.0, 3.0, 2.0, 1.0, 0.0, 1.0];
 
         // Create pipelines - passthrough (no preprocessing)
-        let mut pipelines = HashMap::new();
-        pipelines.insert("value".to_string(), Pipeline::new(vec![]));
+        // Use same data for both features and targets
+        let mut feature_pipelines = HashMap::new();
+        feature_pipelines.insert("value".to_string(), Pipeline::new(vec![]));
+
+        let mut target_pipelines = HashMap::new();
+        target_pipelines.insert("value".to_string(), Pipeline::new(vec![]));
 
         let output_names = vec!["value".to_string()];
         let source_columns = vec!["value".to_string()];
 
         // Build dataset
-        let mut builder = DatasetBuilder::new(pipelines, output_names, source_columns, Some(100));
+        let mut builder = DatasetBuilder::new(
+            feature_pipelines,
+            output_names.clone(),
+            source_columns.clone(),
+            target_pipelines,
+            output_names,
+            source_columns,
+            Some(100),
+        );
 
         for i in 0..100 {
             let value = pattern[i % pattern.len()];
