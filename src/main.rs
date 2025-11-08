@@ -8,6 +8,7 @@ use burn::backend::Autodiff;
 use burn::backend::{NdArray, ndarray::NdArrayDevice};
 use burn::data::dataloader::Dataset;
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 use std::collections::HashMap;
 use tracing::info;
 
@@ -37,6 +38,11 @@ const VALID_COLUMNS: &[&str] = &[
     "day", "hour", "month", "PM2.5", "PM10", "SO2", "NO2", "CO", "O3", "TEMP", "PRES", "DEWP",
     "RAIN", "wd", "WSPM",
 ];
+
+#[derive(Serialize)]
+struct ResultOutput {
+    validation_loss: f64,
+}
 
 /// Parse a single key-value pair with optional pipeline
 /// Format: output_name=source_column:TRANSFORM1 TRANSFORM2 ...
@@ -345,7 +351,7 @@ fn main() -> anyhow::Result<()> {
             // let model = SimpleLstm::<Backend>::new(&device, feature_length, hidden_size, target_length, sequence_length);
 
             // Train
-            train::train(
+            let (_model, validation_loss) = train::train(
                 &device,
                 &dataset_training,
                 &dataset_validation,
@@ -354,6 +360,12 @@ fn main() -> anyhow::Result<()> {
                 learning_rate,
                 model,
             );
+
+            // Output JSON result to stdout for GA to consume
+            let result = ResultOutput {
+                validation_loss: validation_loss as f64,
+            };
+            println!("{}", serde_json::to_string(&result).unwrap());
         }
 
         Command::Export { features, output } => {

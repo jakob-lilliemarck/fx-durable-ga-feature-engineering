@@ -18,7 +18,7 @@ pub fn train<B, M>(
     batch_size: usize,
     learning_rate: f64,
     mut model: M,
-) -> M
+) -> (M, f32)
 where
     B: AutodiffBackend,
     M: SequenceModel<B> + AutodiffModule<B>,
@@ -149,7 +149,7 @@ where
         );
     }
 
-    model
+    (model, best_valid_loss)
 }
 
 #[cfg(test)]
