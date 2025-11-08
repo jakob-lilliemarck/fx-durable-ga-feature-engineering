@@ -210,6 +210,8 @@ fn build_dataset_from_file(
 
         // Create a record with ALL the source columns needed
         let mut record = HashMap::new();
+        let mut has_missing = false;
+
         for source_column in &all_source_columns {
             let value = match source_column.as_str() {
                 "PM2.5" => row.pm2_5,
@@ -232,7 +234,14 @@ fn build_dataset_from_file(
 
             if let Some(v) = value {
                 record.insert(source_column.clone(), v);
+            } else {
+                has_missing = true;
             }
+        }
+
+        // Skip rows with missing values
+        if has_missing {
+            continue;
         }
 
         // Push to builder (skips rows where pipeline returns None)
@@ -275,13 +284,13 @@ mod tests {
 
 fn main() -> anyhow::Result<()> {
     // Initialize tracing subscriber
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .with_thread_ids(false)
-        .with_file(false)
-        .with_line_number(false)
-        .pretty()
-        .init();
+    // tracing_subscriber::fmt()
+    //     .with_target(false)
+    //     .with_thread_ids(false)
+    //     .with_file(false)
+    //     .with_line_number(false)
+    //     .pretty()
+    //     .init();
 
     type Backend = Autodiff<NdArray>;
     let device = NdArrayDevice::default();
@@ -372,7 +381,7 @@ fn main() -> anyhow::Result<()> {
             // For export, use features as both features and targets from first station
             let dataset_builder = build_dataset_from_file(PATHS[0], &features, &features)?;
             dataset_builder.to_csv(&output)?;
-            println!("Preprocessed dataset exported to: {}", output);
+            tracing::info!("Preprocessed dataset exported to: {}", output);
         }
     }
 

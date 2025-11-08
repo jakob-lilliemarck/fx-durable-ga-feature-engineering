@@ -30,6 +30,25 @@ cargo run -- train \
     --feature "month_cos=month:COS(12)" \
     --target "target_temp=TEMP"
 
+# testing to reproduce a generated best performer
+cargo run -- train \
+    --hidden-size 32 \
+    --learning-rate 0.0001 \
+    --sequence-length 40 \
+    --prediction-horizon 1 \
+    --batch-size 100 \
+    --epochs 25 \
+    --feature "hour_sin=hour:SIN(24)" \
+    --feature "hour_cos=hour:COS(24)" \
+    --feature "month_sin=month:SIN(12)" \
+    --feature "month_cos=month:COS(12)" \
+    --feature "feat_0=TEMP" \
+    --feature "feat_1=WSPM:ZSCORE(96) STD(10)" \
+    --feature "feat_2=WSPM:ZSCORE(48) ROC(1)" \
+    --feature "feat_3=TEMP:ZSCORE(96) STD(24)" \
+    --feature "feat_4=TEMP" \
+    --target "target_temp=TEMP"
+
 feng export \
     --feature "temp_ema=TEMP:ZSCORE(100)" \
     --feature "hour_sin=hour:SIN(24)" \
