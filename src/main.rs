@@ -4,7 +4,11 @@ use crate::{
     parser::read_csv,
     preprocessor::{Node, Pipeline},
 };
-use burn::backend::{Autodiff, NdArray, ndarray::NdArrayDevice};
+// use burn::backend::{Candle, candle::CandleDevice};
+// use burn::backend::{LibTorch, libtorch::LibTorchDevice};
+// use burn::backend::{Wgpu, wgpu::WgpuDevice};
+use burn::backend::Autodiff;
+use burn::backend::{NdArray, ndarray::NdArrayDevice};
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 
@@ -194,6 +198,16 @@ fn build_dataset(features: Vec<(String, String, Pipeline)>) -> anyhow::Result<Da
 fn main() -> anyhow::Result<()> {
     type Backend = Autodiff<NdArray>;
     let device = NdArrayDevice::default();
+
+    // type Backend = Autodiff<LibTorch>;
+    // let device = LibTorchDevice::Cpu;
+
+    // type Backend = Autodiff<Wgpu>;
+    // let device = WgpuDevice::default();
+
+    // type Backend = Autodiff<Candle>;
+    // let device = CandleDevice::Cpu;
+
     let args = Args::parse();
 
     match args.command {

@@ -1,7 +1,6 @@
+use super::dataset::SequenceDatasetItem;
 use burn::data::dataloader::batcher::Batcher;
 use burn::prelude::*;
-
-use super::dataset::SequenceDatasetItem;
 
 #[derive(Clone, Debug)]
 pub struct SequenceBatch<B: Backend> {
@@ -11,8 +10,6 @@ pub struct SequenceBatch<B: Backend> {
 
 #[derive(Clone, Debug)]
 pub struct SequenceBatcher<B: Backend> {
-    // you can still store device here if you want,
-    // but it's not required since it's passed into batch()
     _phantom: core::marker::PhantomData<B>,
 }
 
@@ -32,10 +29,15 @@ impl<B: Backend> Batcher<B, SequenceDatasetItem, SequenceBatch<B>> for SequenceB
         let seq_len = items[0].sequence.len();
         let feature_dim = items[0].sequence[0].len();
 
-        // Flatten everything
-        let mut all_sequences = Vec::with_capacity(batch_size * seq_len * feature_dim);
-        let mut all_targets = Vec::with_capacity(batch_size * feature_dim);
+        // Pre-allocate with exact capacity - this is the key optimization!
+        // No reallocations = much faster and no memory fragmentation
+        let total_seq_elements = batch_size * seq_len * feature_dim;
+        let total_target_elements = batch_size * feature_dim;
 
+        let mut all_sequences = Vec::with_capacity(total_seq_elements);
+        let mut all_targets = Vec::with_capacity(total_target_elements);
+
+        // Now extend_from_slice won't cause any reallocations
         for item in items.iter() {
             for timestep in item.sequence.iter() {
                 all_sequences.extend_from_slice(timestep);
@@ -43,7 +45,7 @@ impl<B: Backend> Batcher<B, SequenceDatasetItem, SequenceBatch<B>> for SequenceB
             all_targets.extend_from_slice(&item.target);
         }
 
-        // Create tensors
+        // Create tensors directly from the Vec data
         let sequences = Tensor::<B, 3>::from_data(
             TensorData::new(all_sequences, [batch_size, seq_len, feature_dim]),
             device,

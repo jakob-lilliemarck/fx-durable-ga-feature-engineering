@@ -7,17 +7,6 @@ use std::path::Path;
 
 pub type Timestep = Vec<f32>;
 
-pub struct SequenceDatasetItem {
-    pub sequence: Vec<Timestep>,
-    pub target: Timestep,
-}
-
-pub struct SequenceDataset {
-    sequence_length: usize,
-    prediction_horizon: usize,
-    features: Vec<Timestep>,
-}
-
 pub struct DatasetBuilder {
     pipelines: HashMap<String, Pipeline>,
     output_names: Vec<String>,
@@ -106,18 +95,23 @@ impl DatasetBuilder {
         if split > 1.0 || split < 0.0 {
             return Err(Error::InvalidSplitFactor(split));
         }
+
         let split_idx = (self.dataset.len() as f32 * split) as usize;
         let (training_data, validation_data) = self.dataset.split_at(split_idx);
-        let training = SequenceDataset {
+
+        // Pre-materialize all items during dataset creation
+        let training = SequenceDataset::from_features(
+            training_data.to_vec(),
             sequence_length,
             prediction_horizon,
-            features: training_data.to_vec(),
-        };
-        let validation = SequenceDataset {
+        );
+
+        let validation = SequenceDataset::from_features(
+            validation_data.to_vec(),
             sequence_length,
             prediction_horizon,
-            features: validation_data.to_vec(),
-        };
+        );
+
         Ok((training, validation))
     }
 
@@ -142,29 +136,50 @@ impl DatasetBuilder {
     }
 }
 
+#[derive(Clone)]
+pub struct SequenceDatasetItem {
+    pub sequence: Vec<Timestep>,
+    pub target: Timestep,
+}
+
+pub struct SequenceDataset {
+    items: Vec<SequenceDatasetItem>,
+}
+
 impl SequenceDataset {
-    /// Create a sequence item from a starting index
-    pub fn create_sequence_item(&self, index: usize) -> Option<SequenceDatasetItem> {
-        // Calculate where the target will be positioned
-        let target_index = index + self.sequence_length + self.prediction_horizon;
-        // Check if we have enough data for both sequence and target
-        if target_index >= self.features.len() {
-            return None;
+    /// Build dataset from features by pre-creating all items
+    pub fn from_features(
+        features: Vec<Timestep>,
+        sequence_length: usize,
+        prediction_horizon: usize,
+    ) -> Self {
+        let mut items = Vec::new();
+
+        // Pre-create all sequence items once
+        for index in 0..features.len() {
+            let target_index = index + sequence_length + prediction_horizon;
+
+            if target_index >= features.len() {
+                break;
+            }
+
+            let sequence = features[index..index + sequence_length].to_vec();
+            let target = features[target_index].clone();
+
+            items.push(SequenceDatasetItem { sequence, target });
         }
-        // Get a vector of owned values for the sequence
-        let sequence = self.features[index..index + self.sequence_length].to_vec();
-        let target = self.features[target_index].clone();
-        // Create the item without validation since data was validated on insertion
-        Some(SequenceDatasetItem { sequence, target })
+
+        Self { items }
     }
 }
 
 impl Dataset<SequenceDatasetItem> for SequenceDataset {
     fn get(&self, index: usize) -> Option<SequenceDatasetItem> {
-        self.create_sequence_item(index)
+        // Just clone the pre-created item - much faster than creating from scratch
+        self.items.get(index).cloned()
     }
 
     fn len(&self) -> usize {
-        self.features.len()
+        self.items.len()
     }
 }

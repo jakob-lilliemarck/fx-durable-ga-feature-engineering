@@ -1,22 +1,27 @@
 ## Installation
 ```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install torch==2.9.0 numpy==1.26.4 setuptools
+
+# Make sure to set environment variables for libtorch, see .envrc
 cargo install --path .
 ```
 
 ## Model training example
 ```sh
-train train \
+cargo run train \
     --hidden-size 32 \
     --learning-rate 0.001 \
-    --sequence-length 100 \
+    --sequence-length 24 \
     --prediction-horizon 1 \
     --batch-size 8 \
-    --epochs 100 \
+    --epochs 20 \
     --feature "temp_ema=TEMP:ZSCORE(100)" \
     --feature "hour_sin=hour:SIN(24)" \
     --feature "hour_cos=hour:COS(24)"
 
-train export \
+feng export \
     --feature "temp_ema=TEMP:ZSCORE(100)" \
     --feature "hour_sin=hour:SIN(24)" \
     --feature "hour_cos=hour:COS(24)" \

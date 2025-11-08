@@ -1,6 +1,8 @@
+use std::time::Instant;
+
 use crate::batcher::SequenceBatcher;
 use crate::dataset::SequenceDataset;
-use crate::model::{SimpleLstm, SimpleRnn};
+use crate::model::SimpleLstm;
 use burn::data::dataloader::Dataset;
 use burn::data::dataloader::batcher::Batcher;
 use burn::grad_clipping::GradientClippingConfig;
@@ -10,11 +12,6 @@ use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::prelude::*;
 use burn::tensor::backend::AutodiffBackend;
 
-/*
-If validation loss is much lower than training loss → something's wrong
-If both losses are stuck → learning rate might be too low/high
-If training loss decreases but validation doesn't → overfitting
-*/
 pub fn train<B: AutodiffBackend>(
     device: &B::Device,
     dataset_training: &SequenceDataset,
@@ -40,15 +37,18 @@ pub fn train<B: AutodiffBackend>(
     // Early stopping variables
     let mut best_valid_loss = f32::INFINITY;
     let mut epochs_without_improvement = 0;
-    let patience = 20; // Stop if no improvement for n epochs
+    let patience = 10;
 
     for epoch in 0..epochs {
         // ============ Training Loop ============
         let mut total_train_loss = 0.0;
         let mut num_train_batches = 0;
 
+        let mut ts = Instant::now();
+
         for start_idx in (0..dataset_train_len).step_by(batch_size) {
             let end_idx = (start_idx + batch_size).min(dataset_train_len);
+
             let items: Vec<_> = (start_idx..end_idx)
                 .filter_map(|i| dataset_training.get(i))
                 .collect();
@@ -65,17 +65,24 @@ pub fn train<B: AutodiffBackend>(
             // MSE Loss
             let loss = (outputs - batch.targets).powf_scalar(2.0).mean();
 
-            // Extract scalar value BEFORE backward
+            // Extract scalar BEFORE backward to avoid keeping the loss tensor
             let loss_value = loss.clone().into_scalar().elem::<f32>();
 
-            // Backward pass
+            // Backward pass - this creates the gradient graph
             let grads = loss.backward();
+
+            // Convert gradients to params
             let grads_params = GradientsParams::from_grads(grads, &model);
 
-            // Update parameters
+            // Update parameters - this consumes the gradients
             model = optimizer.step(learning_rate, model, grads_params);
 
-            // Accumulate loss
+            if num_train_batches % 100 == 0 {
+                let elapsed = ts.elapsed();
+                println!("Batch {}: dataset={:?}", num_train_batches, elapsed);
+                ts = Instant::now();
+            }
+
             total_train_loss += loss_value;
             num_train_batches += 1;
         }
@@ -93,6 +100,7 @@ pub fn train<B: AutodiffBackend>(
 
         for start_idx in (0..dataset_valid_len).step_by(batch_size) {
             let end_idx = (start_idx + batch_size).min(dataset_valid_len);
+
             let items: Vec<_> = (start_idx..end_idx)
                 .filter_map(|i| dataset_validation.get(i))
                 .collect();
@@ -103,12 +111,12 @@ pub fn train<B: AutodiffBackend>(
 
             let batch = batcher_valid.batch(items, device);
 
-            // Forward pass (no autodiff)
-            let outputs = valid_model.forward(batch.sequences);
-
-            // MSE Loss
-            let loss = (outputs - batch.targets).powf_scalar(2.0).mean();
-            let loss_value = loss.into_scalar().elem::<f32>();
+            // Validation forward pass (no gradients needed)
+            let loss_value = {
+                let outputs = valid_model.forward(batch.sequences);
+                let loss = (outputs - batch.targets).powf_scalar(2.0).mean();
+                loss.into_scalar().elem::<f32>()
+            }; // Tensor dropped here
 
             total_valid_loss += loss_value;
             num_valid_batches += 1;

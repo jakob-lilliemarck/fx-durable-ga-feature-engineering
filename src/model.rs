@@ -65,14 +65,11 @@ impl<B: Backend> SimpleLstm<B> {
     pub fn forward(&self, input: Tensor<B, 3>) -> Tensor<B, 2> {
         // Forward pass through LSTM
         let (output, _state) = self.lstm.forward(input, None);
+
         let seq_len = output.dims()[1];
+        let last_step = output.narrow(1, seq_len - 1, 1).squeeze::<2>();
 
-        let last_index = Tensor::<B, 1, Int>::from_data([seq_len as i32 - 1], &output.device());
-
-        // Select last time step and remove singleton dimension
-        let last_step = output.select(1, last_index).squeeze_dim(1); // only remove seq dim
-
-        // Linear projection to output size
+        // Linear projection
         self.linear_out.forward(last_step)
     }
 }

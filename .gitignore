@@ -1,3 +1,5 @@
 /target
 PLAN.md
 data
+.env.local
+.venv
