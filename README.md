@@ -1,14 +1,10 @@
-## Installation
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-pip install torch==2.9.0 numpy==1.26.4 setuptools
+# fx-durable-ga-feature-engineering
+A tiny CLI tool to train a neural net on the Beijing Multi-Site Air Quality dataset, providing a syntax and functionality to explore a wide range of feature and preprocessing strategies. The purpose of this repository and Rust crate is to serve as an example of how to use `fx-durable-ga` to perform automated feature-engineering over a constrained, but very vast search space.
 
-# Make sure to set environment variables for libtorch, see .envrc
-cargo install --path .
-```
+*Dataset*: Beijing Multi-Site Air Quality by Song Chen (UCI ML Repository, CC BY 4.0) - https://doi.org/10.24432/C5RK5G
 
 ## Model training example
+This example was the best performer I was able to find manually after playing with it for about 2 hours. Spoiler - the GA surpassed that on the first attempt in a much shorter timeframe.
 ```sh
 cargo run -- train \
     --hidden-size 64 \
@@ -29,67 +25,13 @@ cargo run -- train \
     --feature "month_sin=month:SIN(12)" \
     --feature "month_cos=month:COS(12)" \
     --target "target_temp=TEMP"
+```
 
-# testing to reproduce a generated best performer
-cargo run -- train \
-    --hidden-size 32 \
-    --learning-rate 0.0001 \
-    --sequence-length 40 \
-    --prediction-horizon 1 \
-    --batch-size 100 \
-    --epochs 25 \
-    --feature "hour_sin=hour:SIN(24)" \
-    --feature "hour_cos=hour:COS(24)" \
-    --feature "month_sin=month:SIN(12)" \
-    --feature "month_cos=month:COS(12)" \
-    --feature "feat_0=TEMP" \
-    --feature "feat_1=WSPM:ZSCORE(96) STD(10)" \
-    --feature "feat_2=WSPM:ZSCORE(48) ROC(1)" \
-    --feature "feat_3=TEMP:ZSCORE(96) STD(24)" \
-    --feature "feat_4=TEMP" \
-    --target "target_temp=TEMP"
-
+To export pre-processed data to csv, in order to plot or validate the preprocessed data, use the `export` command
+```sh
 feng export \
     --feature "temp_ema=TEMP:ZSCORE(100)" \
     --feature "hour_sin=hour:SIN(24)" \
     --feature "hour_cos=hour:COS(24)" \
     --output test.csv
 ```
-
-## Targets
-
-### Single Target (Recommended)
-
-For simplicity and interpretability, use one target per model with **raw, unnormalized values**:
-
-```sh
---target "target_temp=TEMP"
-```
-
-**Advantages:**
-- Predictions are directly interpretable (no denormalization needed)
-- No distribution shift issues between training and inference
-- Simpler to reason about model performance
-- Each model can be optimized independently for its specific task
-
-**Note:** Loss values will be larger for raw targets (e.g., MSE ~80 for temperature in °C), but this is expected and doesn't affect model quality.
-
-### Multiple Targets (Advanced)
-
-The model supports predicting multiple targets simultaneously. The loss function (MSE) averages errors across all targets:
-
-```rust
-loss = mean(squared_errors_for_all_targets)
-```
-
-**Important considerations:**
-
-1. **Scale imbalance:** Targets with different scales (e.g., temperature in °C and pressure in hPa) will cause the larger-scale target to dominate the loss. You must normalize targets to similar scales.
-
-2. **ZSCORE normalization issues:** Rolling window ZSCORE (e.g., ZSCORE(48)) creates distribution shift problems:
-   - Summer temps: mean=26°C, std=1.3 → z-score=+1.0 means "slightly warm"
-   - Winter temps: mean=-2°C, std=2.1 → z-score=+1.0 means "very warm"
-   - Model learns z-score patterns that don't transfer across seasons
-   - Denormalization requires maintaining a rolling buffer of recent target values
-
-**Recommendation:** Use separate single-target models instead of multi-target models unless you specifically need joint predictions and are willing to handle the complexity.
