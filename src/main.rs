@@ -213,6 +213,7 @@ fn build_dataset_from_file(
         let mut has_missing = false;
 
         for source_column in &all_source_columns {
+            let wd: Option<f32> = row.wd.clone().map(|wd| wd.into());
             let value = match source_column.as_str() {
                 "PM2.5" => row.pm2_5,
                 "PM10" => row.pm10,
@@ -228,7 +229,7 @@ fn build_dataset_from_file(
                 "hour" => Some(row.hour as f32),
                 "day" => Some(row.day as f32),
                 "month" => Some(row.month as f32),
-                "wd" => None, // String field, handle separately if needed
+                "wd" => wd,
                 _ => None,
             };
 
