@@ -145,6 +145,10 @@ enum Command {
         /// Epochs
         #[clap(long, default_value_t = 100)]
         epochs: usize,
+
+        /// Path to save the trained model (optional)
+        #[arg(long)]
+        model_save_path: Option<String>,
     },
 
     /// Export preprocessed dataset to CSV
@@ -308,6 +312,7 @@ fn main() -> anyhow::Result<()> {
             prediction_horizon,
             batch_size,
             epochs,
+            model_save_path,
         } => {
             let feature_length = features.len();
             let target_length = targets.len();
@@ -369,6 +374,7 @@ fn main() -> anyhow::Result<()> {
                 batch_size,
                 learning_rate,
                 model,
+                model_save_path,
             );
 
             // Output JSON result to stdout for GA to consume

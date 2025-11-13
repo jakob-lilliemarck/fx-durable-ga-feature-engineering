@@ -27,6 +27,24 @@ cargo run -- train \
     --target "target_temp=TEMP"
 ```
 
+### Saving the trained model
+To save the trained model to a file, use the `--model-save-path` argument:
+```sh
+cargo run --release -- train \
+    --hidden-size 16 \
+    --learning-rate 0.01 \
+    --sequence-length 25 \
+    --prediction-horizon 1 \
+    --batch-size 50 \
+    --epochs 10 \
+    --feature "temp_zscore=TEMP:ZSCORE(48)" \
+    --target "target_temp=TEMP" \
+    --model-save-path ./my_model
+```
+
+The model will be saved using Burn's `CompactRecorder` format. If `--model-save-path` is not specified, the model is not saved (useful when running under the GA system).
+
+### Exporting preprocessed data
 To export pre-processed data to csv, in order to plot or validate the preprocessed data, use the `export` command
 ```sh
 feng export \

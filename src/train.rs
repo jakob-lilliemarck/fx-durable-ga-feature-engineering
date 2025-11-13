@@ -8,6 +8,7 @@ use burn::module::AutodiffModule;
 use burn::optim::decay::WeightDecayConfig;
 use burn::optim::{AdamConfig, GradientsParams, Optimizer};
 use burn::prelude::*;
+use burn::record::CompactRecorder;
 use burn::tensor::backend::AutodiffBackend;
 
 pub fn train<B, M>(
@@ -18,6 +19,7 @@ pub fn train<B, M>(
     batch_size: usize,
     learning_rate: f64,
     mut model: M,
+    model_save_path: Option<String>,
 ) -> (M, f32)
 where
     B: AutodiffBackend,
@@ -149,6 +151,14 @@ where
         );
     }
 
+    // Save the trained model if a path was provided
+    if let Some(path) = model_save_path {
+        model
+            .clone()
+            .save_file(path, &CompactRecorder::new())
+            .expect("Failed to save model");
+    }
+
     (model, best_valid_loss)
 }
 
@@ -206,7 +216,7 @@ mod tests {
         let model = SimpleLstm::<Backend>::new(&device, 1, 64, 1, 4);
 
         // Train
-        train(&device, &dataset_train, &dataset_valid, 25, 32, 0.01, model);
+        train(&device, &dataset_train, &dataset_valid, 25, 32, 0.01, model, None);
 
         println!("Training complete! Check if losses decreased.");
     }
