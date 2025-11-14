@@ -2,3 +2,7 @@
 PLAN.md
 .env.local
 .venv
+*.mpk
+*.config.json
+*.infer.csv
+TODO.md

@@ -2,9 +2,15 @@ use super::dataset::SequenceDatasetItem;
 use burn::data::dataloader::batcher::Batcher;
 use burn::prelude::*;
 
+/// A batch of training data, ready for the model.
+///
+/// The batcher's responsibility is to convert a Vec of items (training examples)
+/// into stacked tensors that can be passed to the model.
 #[derive(Clone, Debug)]
 pub struct SequenceBatch<B: Backend> {
+    /// Stacked sequences: shape [batch_size, seq_len, features]
     pub sequences: Tensor<B, 3>,
+    /// Stacked targets: shape [batch_size, output_size]
     pub targets: Tensor<B, 2>,
 }
 
@@ -22,6 +28,10 @@ impl<B: Backend> SequenceBatcher<B> {
 }
 
 impl<B: Backend> Batcher<B, SequenceDatasetItem, SequenceBatch<B>> for SequenceBatcher<B> {
+    /// Convert a Vec of training items into stacked tensors.
+    ///
+    /// Input: Vec of (sequence, target) pairs
+    /// Output: SequenceBatch with sequences and targets as 3D and 2D tensors respectively
     fn batch(&self, items: Vec<SequenceDatasetItem>, device: &B::Device) -> SequenceBatch<B> {
         let batch_size = items.len();
         assert!(batch_size > 0, "Cannot create a batch from an empty Vec");

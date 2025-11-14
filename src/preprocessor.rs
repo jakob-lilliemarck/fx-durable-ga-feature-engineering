@@ -197,7 +197,7 @@ pub enum Node {
 impl Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Roc(roc) => write!(f, "ROC({}", roc.offset),
+            Self::Roc(roc) => write!(f, "ROC({})", roc.offset),
             Self::Cos(cos) => write!(f, "COS({})", cos.period),
             Self::Sin(sin) => write!(f, "SIN({})", sin.period),
             Self::Std(std) => write!(f, "STD({})", std.window),
@@ -369,6 +369,13 @@ impl Pipeline {
         }
 
         value
+    }
+}
+
+impl Display for Pipeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let node_strs: Vec<String> = self.nodes.iter().map(|n| n.to_string()).collect();
+        write!(f, "{}", node_strs.join(" "))
     }
 }
 

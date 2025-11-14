@@ -1,0 +1,23 @@
+{
+  "hidden_size": 64,
+  "input_size": 11,
+  "output_size": 1,
+  "sequence_length": 48,
+  "prediction_horizon": 1,
+  "features": [
+    "temp_zscore=TEMP:ZSCORE(48)",
+    "temp=TEMP:ZSCORE(48)",
+    "temp_roc_1=TEMP:ROC(1) ZSCORE(48)",
+    "temp_roc_4=TEMP:ROC(4) ZSCORE(48)",
+    "pres=PRES:ZSCORE(48)",
+    "pres_roc_1=PRES:ROC(1) ZSCORE(48)",
+    "pres_roc_4=PRES:ROC(4) ZSCORE(48)",
+    "hour_sin=hour:SIN(24)",
+    "hour_cos=hour:COS(24)",
+    "month_sin=month:SIN(12)",
+    "month_cos=month:COS(12)"
+  ],
+  "targets": [
+    "target_temp=TEMP"
+  ]
+}

@@ -95,6 +95,32 @@ pub enum Station {
     Wanshouxigong,
 }
 
+// FIXME:
+// We should define coorindates for each station.
+// 1. Find the centroid using caretesian coordinates or LAT/LON
+// 2. Define polar coordinates or a vector for each station using the centroid
+//
+// consider to implement this as a stateful preprocessor instead. that way we could keep a cache of centroid and a lookup table
+impl Station {
+    // FIXME:
+    /// Returns centroid of all stations as cartesian or LAT/LON coordinates
+    fn centroid() -> (f32, f32) {
+        todo!()
+    }
+
+    // FIXME:
+    /// Returns the position of the station as cartesian or LAT/LON coodinates
+    fn position(&self) -> (f32, f32) {
+        todo!()
+    }
+
+    // FIXME:
+    /// Returns a non-normalized non-scaled vector from the centroid to the station
+    fn vector(&self) -> (f32, f32) {
+        todo!()
+    }
+}
+
 impl TryFrom<&str> for Station {
     type Error = UnknownStation;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -119,9 +145,9 @@ impl TryFrom<&str> for Station {
 #[derive(Debug)]
 pub struct Row {
     pub no: u32,
-    pub month: f32,
-    pub day: f32,
-    pub hour: f32,
+    pub month: f32, // month of year
+    pub day: f32,   // day of month -> FIXME: should be day of week
+    pub hour: f32,  // hour of day
     pub station: Station,
     pub pm2_5: Option<f32>,
     pub pm10: Option<f32>,

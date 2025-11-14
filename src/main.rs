@@ -10,14 +10,17 @@ use burn::data::dataloader::Dataset;
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{Level, info};
 
 mod batcher;
 mod dataset;
+mod infer_dataset;
+mod inference;
 mod model;
 mod parser;
 mod preprocessor;
 mod train;
+mod train_config;
 
 const PATHS: &[&str] = &[
     "data/PRSA_Data_Aotizhongxin_20130301-20170228.csv",
@@ -31,8 +34,10 @@ const PATHS: &[&str] = &[
     "data/PRSA_Data_Shunyi_20130301-20170228.csv",
     "data/PRSA_Data_Tiantan_20130301-20170228.csv",
     "data/PRSA_Data_Wanliu_20130301-20170228.csv",
-    "data/PRSA_Data_Wanshouxigong_20130301-20170228.csv",
+    // "data/PRSA_Data_Wanshouxigong_20130301-20170228.csv", // saved for inference!
 ];
+
+const WANSHOUXIGONG_PATH: &str = "data/PRSA_Data_Wanshouxigong_20130301-20170228.csv";
 
 const VALID_COLUMNS: &[&str] = &[
     "day", "hour", "month", "PM2.5", "PM10", "SO2", "NO2", "CO", "O3", "TEMP", "PRES", "DEWP",
@@ -94,7 +99,7 @@ fn parse_feature_pipeline(
     name = "example-rnn-beijing-air-quality",
     version = "1.0",
     author = "Jakob",
-    about = "Train RNN on Beijing air quality data"
+    about = "Trains a neural network on Beijing air quality data"
 )]
 struct Args {
     #[command(subcommand)]
@@ -160,6 +165,17 @@ enum Command {
         /// Output CSV file path
         #[arg(long, required = true)]
         output: String,
+    },
+
+    /// Run inference on Wanshouxigong dataset using a trained model
+    Infer {
+        /// Path to saved model (will load from {model_path}.config.json)
+        #[arg(long, required = true)]
+        model_path: String,
+
+        /// Maximum number of predictions to generate (optional, defaults to all rows)
+        #[arg(long)]
+        limit: Option<usize>,
     },
 }
 
@@ -289,13 +305,14 @@ mod tests {
 
 fn main() -> anyhow::Result<()> {
     // Initialize tracing subscriber
-    // tracing_subscriber::fmt()
-    //     .with_target(false)
-    //     .with_thread_ids(false)
-    //     .with_file(false)
-    //     .with_line_number(false)
-    //     .pretty()
-    //     .init();
+    tracing_subscriber::fmt()
+        .with_max_level(Level::INFO)
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_file(false)
+        .with_line_number(false)
+        .pretty()
+        .init();
 
     type Backend = Autodiff<NdArray>;
     let device = NdArrayDevice::default();
@@ -365,6 +382,43 @@ fn main() -> anyhow::Result<()> {
             // let model = SimpleRnn::<Backend>::new(&device, feature_length, hidden_size, target_length, sequence_length);
             // let model = SimpleLstm::<Backend>::new(&device, feature_length, hidden_size, target_length, sequence_length);
 
+            // Build config for saving
+            let train_config = if model_save_path.is_some() {
+                let feature_defs: Vec<String> = features
+                    .iter()
+                    .map(|(name, col, pipeline)| {
+                        if pipeline.nodes.is_empty() {
+                            format!("{}={}", name, col)
+                        } else {
+                            format!("{}={}:{}", name, col, pipeline)
+                        }
+                    })
+                    .collect();
+
+                let target_defs: Vec<String> = targets
+                    .iter()
+                    .map(|(name, col, pipeline)| {
+                        if pipeline.nodes.is_empty() {
+                            format!("{}={}", name, col)
+                        } else {
+                            format!("{}={}:{}", name, col, pipeline)
+                        }
+                    })
+                    .collect();
+
+                Some(train_config::TrainConfig {
+                    hidden_size,
+                    input_size: feature_length,
+                    output_size: target_length,
+                    sequence_length,
+                    prediction_horizon,
+                    features: feature_defs,
+                    targets: target_defs,
+                })
+            } else {
+                None
+            };
+
             // Train
             let (_model, validation_loss) = train::train(
                 &device,
@@ -375,6 +429,7 @@ fn main() -> anyhow::Result<()> {
                 learning_rate,
                 model,
                 model_save_path,
+                train_config,
             );
 
             // Output JSON result to stdout for GA to consume
@@ -389,6 +444,22 @@ fn main() -> anyhow::Result<()> {
             let dataset_builder = build_dataset_from_file(PATHS[0], &features, &features)?;
             dataset_builder.to_csv(&output)?;
             tracing::info!("Preprocessed dataset exported to: {}", output);
+        }
+
+        Command::Infer { model_path, limit } => {
+            let engine = inference::InferenceEngine::<Backend>::load(&model_path, &device)?;
+            println!("Running inference...");
+            let results = infer_dataset::run_inference(&engine, WANSHOUXIGONG_PATH, limit)?;
+
+            // Write results to CSV
+            let csv_path = format!("{}.infer.csv", model_path);
+            infer_dataset::write_results_to_csv(&results, &csv_path)?;
+            println!("Results written to: {}", csv_path);
+
+            // Calculate and display metrics
+            let metrics = infer_dataset::calculate_metrics(&results);
+            println!("\n=== Inference Summary ===");
+            println!("{}", metrics);
         }
     }
 

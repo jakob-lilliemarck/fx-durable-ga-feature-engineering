@@ -12,12 +12,12 @@ pub struct DatasetBuilder {
     feature_output_names: Vec<String>,
     feature_source_columns: Vec<String>,
     feature_cache: HashMap<String, f32>,
-    
+
     target_pipelines: HashMap<String, Pipeline>,
     target_output_names: Vec<String>,
     target_source_columns: Vec<String>,
     target_cache: HashMap<String, f32>,
-    
+
     features: Vec<Vec<f32>>,
     targets: Vec<Vec<f32>>,
 }
@@ -49,12 +49,12 @@ impl DatasetBuilder {
             feature_output_names,
             feature_source_columns,
             feature_cache: HashMap::new(),
-            
+
             target_pipelines,
             target_output_names,
             target_source_columns,
             target_cache: HashMap::new(),
-            
+
             features: Vec::with_capacity(size_hint.unwrap_or(0)),
             targets: Vec::with_capacity(size_hint.unwrap_or(0)),
         }
@@ -67,7 +67,10 @@ impl DatasetBuilder {
         // Process features
         let mut feature_timestep = Vec::with_capacity(self.feature_output_names.len());
 
-        for (output_name, source_column) in self.feature_output_names.iter().zip(self.feature_source_columns.iter())
+        for (output_name, source_column) in self
+            .feature_output_names
+            .iter()
+            .zip(self.feature_source_columns.iter())
         {
             let pipeline = match self.feature_pipelines.get_mut(output_name) {
                 Some(pipeline) => pipeline,
@@ -94,7 +97,10 @@ impl DatasetBuilder {
         // Process targets
         let mut target_timestep = Vec::with_capacity(self.target_output_names.len());
 
-        for (output_name, source_column) in self.target_output_names.iter().zip(self.target_source_columns.iter())
+        for (output_name, source_column) in self
+            .target_output_names
+            .iter()
+            .zip(self.target_source_columns.iter())
         {
             let pipeline = match self.target_pipelines.get_mut(output_name) {
                 Some(pipeline) => pipeline,
@@ -119,8 +125,9 @@ impl DatasetBuilder {
         }
 
         // Only push if we got all features AND all targets
-        if self.feature_output_names.len() == feature_timestep.len() 
-            && self.target_output_names.len() == target_timestep.len() {
+        if self.feature_output_names.len() == feature_timestep.len()
+            && self.target_output_names.len() == target_timestep.len()
+        {
             self.features.push(feature_timestep);
             self.targets.push(target_timestep);
         };
@@ -138,7 +145,7 @@ impl DatasetBuilder {
         }
 
         let split_idx = (self.features.len() as f32 * split) as usize;
-        
+
         let (training_features, validation_features) = self.features.split_at(split_idx);
         let (training_targets, validation_targets) = self.targets.split_at(split_idx);
 
@@ -239,7 +246,7 @@ impl SequenceDataset {
     }
 
     /// Build dataset from pre-created items.
-    /// 
+    ///
     /// This is useful for combining items from multiple sources (e.g., different
     /// weather stations) where each source creates its own internally-consistent
     /// sequences, but they can be safely mixed for training.
@@ -270,7 +277,7 @@ mod tests {
         let mut feature_pipelines = HashMap::new();
         feature_pipelines.insert("feat1".to_string(), Pipeline::new(vec![]));
         feature_pipelines.insert("feat2".to_string(), Pipeline::new(vec![]));
-        
+
         let mut target_pipelines = HashMap::new();
         target_pipelines.insert("target".to_string(), Pipeline::new(vec![]));
 
@@ -296,11 +303,11 @@ mod tests {
         // Verify features and targets are separate
         assert_eq!(builder.features.len(), 5);
         assert_eq!(builder.targets.len(), 5);
-        
+
         // Check first timestep: features=[1.0, 2.0], target=[3.0]
         assert_eq!(builder.features[0], vec![1.0, 2.0]);
         assert_eq!(builder.targets[0], vec![3.0]);
-        
+
         // Check second timestep: features=[4.0, 5.0], target=[6.0]
         assert_eq!(builder.features[1], vec![4.0, 5.0]);
         assert_eq!(builder.targets[1], vec![6.0]);
@@ -315,20 +322,13 @@ mod tests {
             vec![5.0, 6.0],
             vec![7.0, 8.0],
         ];
-        
+
         // Targets: [[10], [20], [30], [40]]
-        let targets = vec![
-            vec![10.0],
-            vec![20.0],
-            vec![30.0],
-            vec![40.0],
-        ];
+        let targets = vec![vec![10.0], vec![20.0], vec![30.0], vec![40.0]];
 
         let dataset = SequenceDataset::from_features_and_targets(
-            features,
-            targets,
-            2,  // sequence_length
-            0,  // prediction_horizon (predict immediately after sequence)
+            features, targets, 2, // sequence_length
+            0, // prediction_horizon (predict immediately after sequence)
         );
 
         // Should have 2 items: [0,1]->target[2], [1,2]->target[3]

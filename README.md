@@ -6,7 +6,7 @@ A tiny CLI tool to train a neural net on the Beijing Multi-Site Air Quality data
 ## Model training example
 This example was the best performer I was able to find manually after playing with it for about 2 hours. Spoiler - the GA surpassed that on the first attempt in a much shorter timeframe.
 ```sh
-cargo run -- train \
+cargo run --release -- train \
     --hidden-size 64 \
     --learning-rate 0.0001 \
     --sequence-length 48 \
@@ -24,7 +24,8 @@ cargo run -- train \
     --feature "hour_cos=hour:COS(24)" \
     --feature "month_sin=month:SIN(12)" \
     --feature "month_cos=month:COS(12)" \
-    --target "target_temp=TEMP"
+    --target "target_temp=TEMP" \
+    --model-save-path ./my_model
 ```
 
 ### Saving the trained model
@@ -43,6 +44,21 @@ cargo run --release -- train \
 ```
 
 The model will be saved using Burn's `CompactRecorder` format. If `--model-save-path` is not specified, the model is not saved (useful when running under the GA system).
+
+### Running inference on unseen data
+Once a model is trained and saved, you can run inference on the unseen Wanshouxigong dataset:
+
+```sh
+feng infer --model-path ./my_model
+```
+
+The inference command will:
+1. Load the saved model and its configuration from `./my_model` and `./my_model.config.json`
+2. Process the Wanshouxigong dataset sequentially using the same preprocessing pipelines that were used during training
+3. Generate predictions for each timestep
+4. Output the number of timesteps processed
+
+Important: The model configuration (features, targets, sequence length, prediction horizon, etc.) is automatically loaded from the config file, so you only need to specify the model path.
 
 ### Exporting preprocessed data
 To export pre-processed data to csv, in order to plot or validate the preprocessed data, use the `export` command

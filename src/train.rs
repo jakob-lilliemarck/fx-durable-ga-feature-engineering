@@ -1,6 +1,7 @@
 use crate::batcher::SequenceBatcher;
 use crate::dataset::SequenceDataset;
 use crate::model::SequenceModel;
+use crate::train_config::TrainConfig;
 use burn::data::dataloader::Dataset;
 use burn::data::dataloader::batcher::Batcher;
 use burn::grad_clipping::GradientClippingConfig;
@@ -20,6 +21,7 @@ pub fn train<B, M>(
     learning_rate: f64,
     mut model: M,
     model_save_path: Option<String>,
+    train_config: Option<TrainConfig>,
 ) -> (M, f32)
 where
     B: AutodiffBackend,
@@ -49,9 +51,14 @@ where
         let mut total_train_loss = 0.0;
         let mut num_train_batches = 0;
 
+        // step_by(batch_size) generates starting indices: 0, batch_size, 2*batch_size, ...
+        // This partitions the dataset into non-overlapping groups of items.
+        // Each group becomes one batch for the forward/backward pass.
         for start_idx in (0..dataset_train_len).step_by(batch_size) {
             let end_idx = (start_idx + batch_size).min(dataset_train_len);
 
+            // Collect batch_size items (or fewer for the last partial batch)
+            // Each item is a single training example: (sequence, target) pair
             let items: Vec<_> = (start_idx..end_idx)
                 .filter_map(|i| dataset_training.get(i))
                 .collect();
@@ -60,6 +67,9 @@ where
                 continue;
             }
 
+            // Batcher converts the Vec of items into tensor batch:
+            // - sequences: Tensor<B, 3> of shape [batch_size, seq_len, features]
+            // - targets: Tensor<B, 2> of shape [batch_size, output_size]
             let batch = batcher_train.batch(items, device);
 
             // Forward pass
@@ -151,12 +161,18 @@ where
         );
     }
 
-    // Save the trained model if a path was provided
+    // Save the trained model and config if a path was provided
     if let Some(path) = model_save_path {
         model
             .clone()
-            .save_file(path, &CompactRecorder::new())
+            .save_file(&path, &CompactRecorder::new())
             .expect("Failed to save model");
+
+        // Save config alongside the model if provided
+        if let Some(config) = train_config {
+            let config_path = format!("{}.config.json", path);
+            config.save(&config_path).expect("Failed to save config");
+        }
     }
 
     (model, best_valid_loss)
@@ -216,7 +232,17 @@ mod tests {
         let model = SimpleLstm::<Backend>::new(&device, 1, 64, 1, 4);
 
         // Train
-        train(&device, &dataset_train, &dataset_valid, 25, 32, 0.01, model, None);
+        train(
+            &device,
+            &dataset_train,
+            &dataset_valid,
+            25,
+            32,
+            0.01,
+            model,
+            None,
+            None,
+        );
 
         println!("Training complete! Check if losses decreased.");
     }
