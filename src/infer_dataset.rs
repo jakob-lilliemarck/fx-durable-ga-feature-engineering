@@ -232,20 +232,29 @@ pub fn run_inference<B: Backend>(
         all_row_numbers.push(row_number);
 
         // Check if we have enough data to make a prediction
+        // We need: sequence_length values to feed the model + prediction_horizon lookback for the target
         if all_features.len() > sequence_length + prediction_horizon {
-            let target_idx = all_features.len() - 1 - prediction_horizon;
+            // current_idx: the index of the most recent "anchor" value (prediction_horizon steps back from buffer end)
+            // Note: naming confusion - despite the name, prediction_idx (below) is actually what we predict,
+            // and current_idx is the reference point in the past from which we measure prediction_horizon forward.
+            let current_idx = all_features.len() - 1 - prediction_horizon;
 
-            if target_idx >= sequence_length {
-                // Extract sequence
-                let sequence_start = target_idx - sequence_length;
-                let sequence = all_features[sequence_start..target_idx].to_vec();
-
-                // Get target value at prediction horizon
-                let prediction_idx = target_idx + prediction_horizon;
+            if current_idx >= sequence_length {
+                // prediction_idx: the index of the value we're trying to predict (current_idx + prediction_horizon)
+                let prediction_idx = current_idx + prediction_horizon;
+                
+                // Build a SequenceDatasetItem: sequence_length consecutive features,
+                // with the target being prediction_horizon steps after the sequence ends.
+                // current_idx is the reference point (the "now" in the sequence).
+                // sequence_start goes back sequence_length steps from current_idx.
+                // The sequence includes current_idx as its last element.
+                // The target is at prediction_idx = current_idx + prediction_horizon (the future we predict).
+                let sequence_start = current_idx - sequence_length + 1;
+                let sequence = all_features[sequence_start..=current_idx].to_vec();
                 if prediction_idx < all_targets.len() {
                     let target = all_targets[prediction_idx].clone();
-                    let prediction_naive = all_targets[target_idx].clone();
-                    let pred_row_number = all_row_numbers[target_idx];
+                    let prediction_naive = all_targets[current_idx].clone();
+                    let pred_row_number = all_row_numbers[current_idx];
 
                     // Make prediction
                     match engine.predict(sequence) {
