@@ -19,23 +19,22 @@
 //! Expected speedup: ~35x (from 35k single forward passes → 1k batched forward passes).
 //! Tradeoff: Requires loading all preprocessed data into memory.
 
+use crate::dataset::{self, Metadata};
 use crate::inference::InferenceEngine;
-use crate::parser::read_csv;
 use crate::preprocessor::Pipeline;
+use burn::data::dataloader::Dataset;
 use burn::prelude::Backend;
-use std::collections::HashMap;
 use std::fmt;
 use std::fs::File;
 use std::io::Write;
-use tracing::debug;
 
 #[derive(Debug, Clone)]
 pub struct InferenceResult {
-    pub row_number: u32,                 // Actual row number from CSV file
-    pub target: Vec<f32>,                // The actual value at the prediction target timestep
-    pub prediction: Vec<f32>,            // Model prediction
-    pub prediction_naive: Vec<f32>,      // Naive prediction using the value of the current timestep
-    pub dist_prediction: Vec<f32>,       // |target - prediction|
+    pub metadata: Metadata, // Source sequence metadata (start, end, target row numbers)
+    pub target: Vec<f32>,   // The actual value at the prediction target timestep
+    pub prediction: Vec<f32>, // Model prediction
+    pub prediction_naive: Vec<f32>, // Naive prediction using the value of the current timestep
+    pub dist_prediction: Vec<f32>, // |target - prediction|
     pub dist_prediction_naive: Vec<f32>, // |target - prediction_naive|
     pub baseline_accuracy: Vec<f32>, // dist_prediction_naive / dist_prediction if prediction is better, else 0
 }
@@ -45,7 +44,7 @@ impl fmt::Display for InferenceResult {
         write!(
             f,
             "[{}] pred: {:?}, actual: {:?}, current: {:?}",
-            self.row_number,
+            self.metadata.target_row_no,
             format_vec(&self.prediction),
             format_vec(&self.target),
             format_vec(&self.prediction_naive)
@@ -86,7 +85,7 @@ impl fmt::Display for InferenceMetrics {
     }
 }
 
-/// Run inference on a dataset, processing it sequentially
+/// Run inference on a dataset using the same pipeline infrastructure as training
 ///
 /// If `limit` is specified, stops after generating that many predictions.
 /// If `limit` is None, processes the entire dataset.
@@ -102,213 +101,86 @@ pub fn run_inference<B: Backend>(
     let sequence_length = engine.config.sequence_length;
     let prediction_horizon = engine.config.prediction_horizon;
 
-    // Create fresh pipelines for inference
-    let mut feature_pipelines: HashMap<String, Pipeline> = HashMap::with_capacity(features.len());
-    let mut target_pipelines: HashMap<String, Pipeline> = HashMap::with_capacity(targets.len());
+    // Use DatasetBuilder to load and preprocess the dataset
+    // This reuses the exact same pipeline infrastructure as training
+    let dataset_builder = dataset::build_dataset_from_file(dataset_path, &features, &targets)?;
 
-    for (output_name, _, pipeline) in &features {
-        feature_pipelines.insert(output_name.clone(), pipeline.clone());
-    }
+    // Build without splitting (None for split parameter means no train/validation split)
+    let (inference_dataset, _) =
+        dataset_builder.build(sequence_length, prediction_horizon, None)?;
 
-    for (output_name, _, pipeline) in &targets {
-        target_pipelines.insert(output_name.clone(), pipeline.clone());
-    }
-
-    // State tracking
-    let mut feature_caches: HashMap<String, f32> = HashMap::new();
-    let mut target_caches: HashMap<String, f32> = HashMap::new();
-
-    // All timesteps collected so far (for warmup and buffering)
-    let mut all_features: Vec<Vec<f32>> = Vec::new();
-    let mut all_targets: Vec<Vec<f32>> = Vec::new();
-    let mut all_row_numbers: Vec<u32> = Vec::new();
     let mut results = Vec::new();
 
-    // Iterate through CSV rows
-    for result in read_csv(dataset_path)? {
-        let row = result?;
-        let row_number = row.no;
-
-        // Extract all source columns from row
-        let mut record = HashMap::new();
-
-        let wd_val: Option<f32> = row.wd.clone().map(|wd| wd.into());
-        let all_source_cols = vec![
-            ("PM2.5", row.pm2_5),
-            ("PM10", row.pm10),
-            ("SO2", row.so2),
-            ("NO2", row.no2),
-            ("CO", row.co),
-            ("O3", row.o3),
-            ("TEMP", row.temp),
-            ("PRES", row.pres),
-            ("DEWP", row.dewp),
-            ("RAIN", row.rain),
-            ("WSPM", row.wspm),
-        ];
-
-        for (col_name, value) in all_source_cols {
-            if let Some(v) = value {
-                record.insert(col_name.to_string(), v);
+    // Iterate through all items in the dataset
+    for idx in 0..inference_dataset.len() {
+        // Get the metadata and item for this sequence
+        let metadata = match inference_dataset.get_metadata(idx) {
+            Some(m) => m,
+            None => {
+                tracing::debug!("No item at index: [{}]", idx);
+                continue;
             }
-        }
+        };
 
-        record.insert("hour".to_string(), row.hour as f32);
-        record.insert("day".to_string(), row.day as f32);
-        record.insert("month".to_string(), row.month as f32);
+        let item = inference_dataset
+            .get(idx)
+            .expect("item should exist if metadata exists");
 
-        if let Some(wd) = wd_val {
-            record.insert("wd".to_string(), wd);
-        }
+        // The naive prediction is the preprocessed target value at the sequence end (the anchor point)
+        let prediction_naive = metadata.target_at_sequence_end.clone();
 
-        // Process features through pipelines (matching dataset.rs pattern)
-        // Process ALL features for this row before deciding to skip
-        let mut feature_timestep = Vec::with_capacity(features.len());
-        let mut skip_row = false;
+        // Make prediction
+        match engine.predict(item.sequence) {
+            Ok(prediction) => {
+                // Calculate distance metrics
+                let dist_baseline: Vec<f32> = item
+                    .target
+                    .iter()
+                    .zip(prediction_naive.iter())
+                    .map(|(a, c)| (a - c).abs())
+                    .collect();
 
-        for (output_name, source_column, _) in &features {
-            let pipeline = feature_pipelines.get_mut(output_name).unwrap();
+                let dist_prediction: Vec<f32> = item
+                    .target
+                    .iter()
+                    .zip(prediction.iter())
+                    .map(|(a, p)| (a - p).abs())
+                    .collect();
 
-            match record.get(source_column) {
-                Some(value) => {
-                    if let Some(processed) = pipeline.process(*value) {
-                        feature_caches.insert(output_name.clone(), processed);
-                        feature_timestep.push(processed);
-                    } else {
-                        skip_row = true;
-                    }
-                }
-                None => {
-                    if let Some(cached) = feature_caches.get(output_name) {
-                        feature_timestep.push(*cached);
-                    } else {
-                        skip_row = true;
-                    }
-                }
-            };
-        }
-
-        debug!(message="Features processed", row = ?row_number, feature_timestep = ?feature_timestep, skip_row=skip_row);
-
-        if skip_row {
-            continue;
-        }
-
-        // Process targets through pipelines
-        // Process ALL targets for this row before deciding to skip
-        let mut target_timestep = Vec::with_capacity(targets.len());
-
-        for (output_name, source_column, _) in &targets {
-            let pipeline = target_pipelines.get_mut(output_name).unwrap();
-
-            match record.get(source_column) {
-                Some(value) => {
-                    if let Some(processed) = pipeline.process(*value) {
-                        target_caches.insert(output_name.clone(), processed);
-                        target_timestep.push(processed);
-                    } else {
-                        skip_row = true;
-                    }
-                }
-                None => {
-                    if let Some(cached) = target_caches.get(output_name) {
-                        target_timestep.push(*cached);
-                    } else {
-                        skip_row = true;
-                    }
-                }
-            };
-
-            debug!(message="Target processed", row = row_number, target = %output_name, target_timestep=?target_timestep, skip_row=skip_row);
-        }
-
-        if skip_row {
-            continue;
-        }
-
-        // Add to our buffers
-        all_features.push(feature_timestep);
-        all_targets.push(target_timestep);
-        all_row_numbers.push(row_number);
-
-        // Check if we have enough data to make a prediction
-        // We need: sequence_length values to feed the model + prediction_horizon lookback for the target
-        if all_features.len() > sequence_length + prediction_horizon {
-            // current_idx: the index of the most recent "anchor" value (prediction_horizon steps back from buffer end)
-            // Note: naming confusion - despite the name, prediction_idx (below) is actually what we predict,
-            // and current_idx is the reference point in the past from which we measure prediction_horizon forward.
-            let current_idx = all_features.len() - 1 - prediction_horizon;
-
-            if current_idx >= sequence_length {
-                // prediction_idx: the index of the value we're trying to predict (current_idx + prediction_horizon)
-                let prediction_idx = current_idx + prediction_horizon;
-
-                // Build a SequenceDatasetItem: sequence_length consecutive features,
-                // with the target being prediction_horizon steps after the sequence ends.
-                // current_idx is the reference point (the "now" in the sequence).
-                // sequence_start goes back sequence_length steps from current_idx.
-                // The sequence includes current_idx as its last element.
-                // The target is at prediction_idx = current_idx + prediction_horizon (the future we predict).
-                let sequence_start = current_idx - sequence_length + 1;
-                let sequence = all_features[sequence_start..=current_idx].to_vec();
-                if prediction_idx < all_targets.len() {
-                    let target = all_targets[prediction_idx].clone();
-                    let prediction_naive = all_targets[current_idx].clone();
-                    let pred_row_number = all_row_numbers[current_idx];
-
-                    // Make prediction
-                    match engine.predict(sequence) {
-                        Ok(prediction) => {
-                            // Calculate distance metrics
-                            let dist_baseline: Vec<f32> = target
-                                .iter()
-                                .zip(prediction_naive.iter())
-                                .map(|(a, c)| (a - c).abs())
-                                .collect();
-
-                            let dist_prediction: Vec<f32> = target
-                                .iter()
-                                .zip(prediction.iter())
-                                .map(|(a, p)| (a - p).abs())
-                                .collect();
-
-                            let accuracy: Vec<f32> = dist_prediction
-                                .iter()
-                                .zip(dist_baseline.iter())
-                                .map(|(dist_pred, dist_base)| {
-                                    if dist_pred > dist_base {
-                                        0.0
-                                    } else if dist_base == &0.0 {
-                                        if dist_pred == &0.0 { 100.0 } else { 0.0 }
-                                    } else {
-                                        (1.0 - (dist_pred / dist_base)) * 100.0
-                                    }
-                                })
-                                .collect();
-
-                            let result = InferenceResult {
-                                row_number: pred_row_number,
-                                prediction,
-                                target,
-                                prediction_naive,
-                                dist_prediction_naive: dist_baseline,
-                                dist_prediction,
-                                baseline_accuracy: accuracy,
-                            };
-                            results.push(result);
-
-                            // Check if we've reached the limit
-                            if let Some(max_predictions) = limit {
-                                if results.len() >= max_predictions {
-                                    return Ok(results);
-                                }
-                            }
+                let accuracy: Vec<f32> = dist_prediction
+                    .iter()
+                    .zip(dist_baseline.iter())
+                    .map(|(dist_pred, dist_base)| {
+                        if dist_pred > dist_base {
+                            0.0
+                        } else if dist_base == &0.0 {
+                            if dist_pred == &0.0 { 100.0 } else { 0.0 }
+                        } else {
+                            (1.0 - (dist_pred / dist_base)) * 100.0
                         }
-                        Err(e) => {
-                            eprintln!("Warning: inference failed at timestep: {}", e);
-                        }
+                    })
+                    .collect();
+
+                let result = InferenceResult {
+                    metadata: metadata.clone(),
+                    prediction,
+                    target: item.target,
+                    prediction_naive,
+                    dist_prediction_naive: dist_baseline,
+                    dist_prediction,
+                    baseline_accuracy: accuracy,
+                };
+                results.push(result);
+
+                // Check if we've reached the limit
+                if let Some(max_predictions) = limit {
+                    if results.len() >= max_predictions {
+                        return Ok(results);
                     }
                 }
+            }
+            Err(e) => {
+                eprintln!("Warning: inference failed at sequence {}: {}", idx, e);
             }
         }
     }
@@ -356,10 +228,10 @@ fn parse_definitions(definitions: &[String]) -> anyhow::Result<Vec<(String, Stri
 pub fn write_results_to_csv(results: &[InferenceResult], path: &str) -> anyhow::Result<()> {
     let mut file = File::create(path)?;
 
-    // Write header
+    // Write header with metadata columns
     writeln!(
         file,
-        "row_number,prediction,actual_value,current_value,dist_baseline,dist_prediction,accuracy"
+        "sequence_start_row_no,sequence_end_row_no,target_row_no,prediction,actual_value,current_value,dist_baseline,dist_prediction,accuracy"
     )?;
 
     // Write data rows
@@ -397,8 +269,10 @@ pub fn write_results_to_csv(results: &[InferenceResult], path: &str) -> anyhow::
 
         writeln!(
             file,
-            "{},{},{},{},{},{},{}",
-            result.row_number,
+            "{},{},{},{},{},{},{},{},{}",
+            result.metadata.sequence_start_row_no,
+            result.metadata.sequence_end_row_no,
+            result.metadata.target_row_no,
             pred_str,
             actual_str,
             current_str,

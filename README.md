@@ -49,7 +49,9 @@ The model will be saved using Burn's `CompactRecorder` format. If `--model-save-
 Once a model is trained and saved, you can run inference on the unseen Wanshouxigong dataset:
 
 ```sh
-feng infer --model-path ./my_model
+cargo run --release -- infer \
+    --model-path ./my_model \
+    --limit 100
 ```
 
 The inference command will:

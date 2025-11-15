@@ -18,9 +18,10 @@ pub const VALID_COLUMNS: &[&str] = &[
 /// Metadata about the source rows for a sequence item
 #[derive(Debug, Clone)]
 pub struct Metadata {
-    pub sequence_start_row_no: String, // CSV row identifier of first sequence timestep
-    pub sequence_end_row_no: String,   // CSV row identifier of last sequence timestep (anchor)
-    pub target_row_no: String,         // CSV row identifier of the target value being predicted
+    pub sequence_start_row_no: String,     // CSV row identifier of first sequence timestep
+    pub sequence_end_row_no: String,       // CSV row identifier of last sequence timestep (anchor)
+    pub target_row_no: String,             // CSV row identifier of the target value being predicted
+    pub target_at_sequence_end: Vec<f32>,  // Preprocessed target value at the end of sequence (for naive baseline)
 }
 
 pub struct DatasetBuilder {
@@ -370,11 +371,12 @@ impl SequenceDataset {
             let start_index = index;
             let end_index = index + sequence_length - 1;
 
-            // Create Metadata from record_ids
+            // Create Metadata from record_ids and target value at sequence end
             let metadata = Metadata {
                 sequence_start_row_no: record_ids[start_index].clone(),
                 sequence_end_row_no: record_ids[end_index].clone(),
                 target_row_no: record_ids[target_index].clone(),
+                target_at_sequence_end: targets[end_index].clone(),
             };
 
             // Create sequence and target as before
