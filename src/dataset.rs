@@ -362,14 +362,14 @@ impl SequenceDataset {
 
         // Pre-create all sequence items once
         for index in 0..features.len() {
-            let target_index = index + sequence_length + prediction_horizon;
+            let end_index = index + sequence_length - 1;
+            let target_index = end_index + prediction_horizon;
 
             if target_index >= features.len() || target_index >= targets.len() {
                 break;
             }
 
             let start_index = index;
-            let end_index = index + sequence_length - 1;
 
             // Create Metadata from record_ids and target value at sequence end
             let metadata = Metadata {
@@ -421,6 +421,32 @@ impl Dataset<SequenceDatasetItem> for SequenceDataset {
 mod tests {
     use super::*;
     use crate::preprocessor::Pipeline;
+
+    /// Helper to build a simple dataset with integers for easy visual verification.
+    /// Features: [[1], [2], [3], ..., [num_timesteps]]
+    /// Targets:  [[10], [20], [30], ..., [num_timesteps*10]]
+    /// RecordIDs: "1", "2", ..., "{num_timesteps}"
+    fn create_simple_dataset(
+        num_timesteps: usize,
+        sequence_length: usize,
+        prediction_horizon: usize,
+    ) -> SequenceDataset {
+        let features: Vec<Vec<f32>> = (1..=num_timesteps as i32)
+            .map(|i| vec![i as f32])
+            .collect();
+        let targets: Vec<Vec<f32>> = (1..=num_timesteps as i32)
+            .map(|i| vec![(i * 10) as f32])
+            .collect();
+        let record_ids: Vec<String> = (1..=num_timesteps as i32).map(|i| i.to_string()).collect();
+
+        SequenceDataset::from_features_and_targets(
+            features,
+            targets,
+            record_ids,
+            sequence_length,
+            prediction_horizon,
+        )
+    }
 
     #[test]
     fn test_dataset_builder_separates_features_and_targets() {
@@ -488,17 +514,83 @@ mod tests {
             0, // prediction_horizon (predict immediately after sequence)
         );
 
-        // Should have 2 items: [0,1]->target[2], [1,2]->target[3]
-        assert_eq!(dataset.len(), 2);
+        // Should have 3 items:
+        // Item 0: seq[0,1] -> target_index = end_index(1) + horizon(0) = 1 -> targets[1] = [20]
+        // Item 1: seq[1,2] -> target_index = end_index(2) + horizon(0) = 2 -> targets[2] = [30]
+        // Item 2: seq[2,3] -> target_index = end_index(3) + horizon(0) = 3 -> targets[3] = [40]
+        assert_eq!(dataset.len(), 3);
 
-        // First item: sequence=[[1,2], [3,4]], target=[30]
+        // First item: sequence=[[1,2], [3,4]], target=[20]
         let item0 = dataset.get(0).unwrap();
         assert_eq!(item0.sequence, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);
-        assert_eq!(item0.target, vec![30.0]);
+        assert_eq!(item0.target, vec![20.0]);
 
-        // Second item: sequence=[[3,4], [5,6]], target=[40]
+        // Second item: sequence=[[3,4], [5,6]], target=[30]
         let item1 = dataset.get(1).unwrap();
         assert_eq!(item1.sequence, vec![vec![3.0, 4.0], vec![5.0, 6.0]]);
-        assert_eq!(item1.target, vec![40.0]);
+        assert_eq!(item1.target, vec![30.0]);
+
+        // Third item: sequence=[[5,6], [7,8]], target=[40]
+        let item2 = dataset.get(2).unwrap();
+        assert_eq!(item2.sequence, vec![vec![5.0, 6.0], vec![7.0, 8.0]]);
+        assert_eq!(item2.target, vec![40.0]);
+    }
+
+    #[test]
+    fn test_get_and_metadata_h1_item0() {
+        // sequence_length = 3, horizon = 1
+        let ds = create_simple_dataset(12, 3, 1);
+        // First item: sequence at indices [0,1,2] => [[1],[2],[3]], anchor at index 2
+        // target_index = end_index + horizon = 2 + 1 = 3 => targets[3] = [40]
+        let item = ds.get(0).expect("item 0 exists");
+        let md = ds.get_metadata(0).expect("metadata 0 exists");
+
+        assert_eq!(item.sequence, vec![vec![1.0], vec![2.0], vec![3.0]]);
+        assert_eq!(item.target, vec![40.0]); // 4th target value (index 3) = 40
+
+        // Metadata row numbers (1-based to match data indices)
+        assert_eq!(md.sequence_start_row_no, "1");
+        assert_eq!(md.sequence_end_row_no, "3");
+        assert_eq!(md.target_row_no, "4");
+
+        // Anchor target should be target[end_index] = targets[2] = [30]
+        assert_eq!(md.target_at_sequence_end, vec![30.0]);
+    }
+
+    #[test]
+    fn test_get_and_metadata_h1_item1() {
+        let ds = create_simple_dataset(12, 3, 1);
+        // Second item: sequence at indices [1,2,3] => [[2],[3],[4]], anchor at index 3
+        // target_index = 3 + 1 = 4 => targets[4] = [50]
+        let item = ds.get(1).expect("item 1 exists");
+        let md = ds.get_metadata(1).expect("metadata 1 exists");
+
+        assert_eq!(item.sequence, vec![vec![2.0], vec![3.0], vec![4.0]]);
+        assert_eq!(item.target, vec![50.0]);
+
+        assert_eq!(md.sequence_start_row_no, "2");
+        assert_eq!(md.sequence_end_row_no, "4");
+        assert_eq!(md.target_row_no, "5");
+
+        assert_eq!(md.target_at_sequence_end, vec![40.0]);
+    }
+
+    #[test]
+    fn test_get_and_metadata_h3_item0() {
+        // sequence_length = 3, horizon = 3
+        let ds = create_simple_dataset(12, 3, 3);
+        // First item: sequence at indices [0,1,2] => [[1],[2],[3]], anchor at index 2
+        // target_index = end_index + horizon = 2 + 3 = 5 => targets[5] = [60]
+        let item = ds.get(0).expect("item 0 exists");
+        let md = ds.get_metadata(0).expect("metadata 0 exists");
+
+        assert_eq!(item.sequence, vec![vec![1.0], vec![2.0], vec![3.0]]);
+        assert_eq!(item.target, vec![60.0]);
+
+        assert_eq!(md.sequence_start_row_no, "1");
+        assert_eq!(md.sequence_end_row_no, "3");
+        assert_eq!(md.target_row_no, "6");
+
+        assert_eq!(md.target_at_sequence_end, vec![30.0]);
     }
 }
