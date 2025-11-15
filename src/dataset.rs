@@ -1,3 +1,4 @@
+use crate::parser::read_csv;
 use crate::preprocessor::Pipeline;
 use burn::data::dataset::Dataset;
 use std::collections::HashMap;
@@ -8,6 +9,11 @@ use std::path::Path;
 pub type Timestep = Vec<f32>;
 pub type RecordID = String;
 pub type ColumnID = String;
+
+pub const VALID_COLUMNS: &[&str] = &[
+    "day", "hour", "month", "PM2.5", "PM10", "SO2", "NO2", "CO", "O3", "TEMP", "PRES", "DEWP",
+    "RAIN", "wd", "WSPM",
+];
 
 /// Metadata about the source rows for a sequence item
 #[derive(Debug, Clone)]
@@ -218,6 +224,100 @@ impl DatasetBuilder {
 
         Ok(())
     }
+}
+
+/// Build a DatasetBuilder from a CSV file
+pub fn build_dataset_from_file(
+    path: &str,
+    features: &[(String, String, Pipeline)],
+    targets: &[(String, String, Pipeline)],
+) -> anyhow::Result<DatasetBuilder> {
+    // Process features (clone pipelines for each file)
+    let mut feature_pipelines = HashMap::with_capacity(features.len());
+    let mut feature_output_names = Vec::with_capacity(features.len());
+    let mut feature_source_columns = Vec::with_capacity(features.len());
+
+    for (output_name, source_column, pipeline) in features {
+        feature_pipelines.insert(output_name.clone(), pipeline.clone());
+        feature_output_names.push(output_name.clone());
+        feature_source_columns.push(source_column.clone());
+    }
+
+    // Process targets (clone pipelines for each file)
+    let mut target_pipelines = HashMap::with_capacity(targets.len());
+    let mut target_output_names = Vec::with_capacity(targets.len());
+    let mut target_source_columns = Vec::with_capacity(targets.len());
+
+    for (output_name, source_column, pipeline) in targets {
+        target_pipelines.insert(output_name.clone(), pipeline.clone());
+        target_output_names.push(output_name.clone());
+        target_source_columns.push(source_column.clone());
+    }
+
+    // Collect all unique source columns needed
+    let mut all_source_columns = feature_source_columns.clone();
+    for col in &target_source_columns {
+        if !all_source_columns.contains(col) {
+            all_source_columns.push(col.clone());
+        }
+    }
+
+    let mut dataset_builder = DatasetBuilder::new(
+        feature_pipelines,
+        feature_output_names,
+        feature_source_columns,
+        target_pipelines,
+        target_output_names,
+        target_source_columns,
+        Some(35066),
+    );
+
+    // Read and push all rows from specified file
+    for result in read_csv(path)? {
+        let row = result?;
+
+        // Create a record with ALL the source columns needed
+        let mut record = HashMap::new();
+        let mut has_missing = false;
+
+        for source_column in &all_source_columns {
+            let wd: Option<f32> = row.wd.clone().map(|wd| wd.into());
+            let value = match source_column.as_str() {
+                "PM2.5" => row.pm2_5,
+                "PM10" => row.pm10,
+                "SO2" => row.so2,
+                "NO2" => row.no2,
+                "CO" => row.co,
+                "O3" => row.o3,
+                "TEMP" => row.temp,
+                "PRES" => row.pres,
+                "DEWP" => row.dewp,
+                "RAIN" => row.rain,
+                "WSPM" => row.wspm,
+                "hour" => Some(row.hour as f32),
+                "day" => Some(row.day as f32),
+                "month" => Some(row.month as f32),
+                "wd" => wd,
+                _ => None,
+            };
+
+            if let Some(v) = value {
+                record.insert(source_column.clone(), v);
+            } else {
+                has_missing = true;
+            }
+        }
+
+        // Skip rows with missing values
+        if has_missing {
+            continue;
+        }
+
+        // Push to builder (skips rows where pipeline returns None)
+        dataset_builder.push(record, row.no.to_string())?;
+    }
+
+    Ok(dataset_builder)
 }
 
 /// A single, self-contained training example.
