@@ -6,6 +6,16 @@ use std::io::Write;
 use std::path::Path;
 
 pub type Timestep = Vec<f32>;
+pub type RecordID = String;
+pub type ColumnID = String;
+
+/// Metadata about the source rows for a sequence item
+#[derive(Debug, Clone)]
+pub struct Metadata {
+    pub sequence_start_row_no: String, // CSV row identifier of first sequence timestep
+    pub sequence_end_row_no: String,   // CSV row identifier of last sequence timestep (anchor)
+    pub target_row_no: String,         // CSV row identifier of the target value being predicted
+}
 
 pub struct DatasetBuilder {
     feature_pipelines: HashMap<String, Pipeline>,
@@ -20,6 +30,7 @@ pub struct DatasetBuilder {
 
     features: Vec<Vec<f32>>,
     targets: Vec<Vec<f32>>,
+    record_ids: Vec<RecordID>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -57,13 +68,14 @@ impl DatasetBuilder {
 
             features: Vec::with_capacity(size_hint.unwrap_or(0)),
             targets: Vec::with_capacity(size_hint.unwrap_or(0)),
+            record_ids: Vec::with_capacity(size_hint.unwrap_or(0)),
         }
     }
 
     // NOTE!
     // - Required records to be pushed IN ORDER!
     // - Currently does not forward fill
-    pub fn push(&mut self, record: HashMap<String, f32>) -> Result<(), Error> {
+    pub fn push(&mut self, record: HashMap<String, f32>, id: String) -> Result<(), Error> {
         // Process features
         let mut feature_timestep = Vec::with_capacity(self.feature_output_names.len());
 
@@ -130,6 +142,7 @@ impl DatasetBuilder {
         {
             self.features.push(feature_timestep);
             self.targets.push(target_timestep);
+            self.record_ids.push(id);
         };
         Ok(())
     }
@@ -138,33 +151,50 @@ impl DatasetBuilder {
         self,
         sequence_length: usize,
         prediction_horizon: usize,
-        split: f32,
-    ) -> Result<(SequenceDataset, SequenceDataset), Error> {
-        if split > 1.0 || split < 0.0 {
-            return Err(Error::InvalidSplitFactor(split));
+        split: Option<f32>,
+    ) -> Result<(SequenceDataset, Option<SequenceDataset>), Error> {
+        match split {
+            Some(ratio) => {
+                if ratio > 1.0 || ratio < 0.0 {
+                    return Err(Error::InvalidSplitFactor(ratio));
+                }
+
+                let split_idx = (self.features.len() as f32 * ratio) as usize;
+
+                let (training_features, validation_features) = self.features.split_at(split_idx);
+                let (training_targets, validation_targets) = self.targets.split_at(split_idx);
+                let (training_ids, validation_ids) = self.record_ids.split_at(split_idx);
+
+                // Pre-materialize all items during dataset creation
+                let training = SequenceDataset::from_features_and_targets(
+                    training_features.to_vec(),
+                    training_targets.to_vec(),
+                    training_ids.to_vec(),
+                    sequence_length,
+                    prediction_horizon,
+                );
+
+                let validation = SequenceDataset::from_features_and_targets(
+                    validation_features.to_vec(),
+                    validation_targets.to_vec(),
+                    validation_ids.to_vec(),
+                    sequence_length,
+                    prediction_horizon,
+                );
+
+                Ok((training, Some(validation)))
+            }
+            None => {
+                let dataset = SequenceDataset::from_features_and_targets(
+                    self.features,
+                    self.targets,
+                    self.record_ids,
+                    sequence_length,
+                    prediction_horizon,
+                );
+                Ok((dataset, None))
+            }
         }
-
-        let split_idx = (self.features.len() as f32 * split) as usize;
-
-        let (training_features, validation_features) = self.features.split_at(split_idx);
-        let (training_targets, validation_targets) = self.targets.split_at(split_idx);
-
-        // Pre-materialize all items during dataset creation
-        let training = SequenceDataset::from_features_and_targets(
-            training_features.to_vec(),
-            training_targets.to_vec(),
-            sequence_length,
-            prediction_horizon,
-        );
-
-        let validation = SequenceDataset::from_features_and_targets(
-            validation_features.to_vec(),
-            validation_targets.to_vec(),
-            sequence_length,
-            prediction_horizon,
-        );
-
-        Ok((training, validation))
     }
 
     /// Dump the dataset to a CSV file
@@ -215,7 +245,7 @@ pub struct SequenceDatasetItem {
 }
 
 pub struct SequenceDataset {
-    items: Vec<SequenceDatasetItem>,
+    items: Vec<(Metadata, SequenceDatasetItem)>,
 }
 
 impl SequenceDataset {
@@ -223,6 +253,7 @@ impl SequenceDataset {
     pub fn from_features_and_targets(
         features: Vec<Timestep>,
         targets: Vec<Timestep>,
+        record_ids: Vec<RecordID>,
         sequence_length: usize,
         prediction_horizon: usize,
     ) -> Self {
@@ -236,29 +267,47 @@ impl SequenceDataset {
                 break;
             }
 
+            let start_index = index;
+            let end_index = index + sequence_length - 1;
+
+            // Create Metadata from record_ids
+            let metadata = Metadata {
+                sequence_start_row_no: record_ids[start_index].clone(),
+                sequence_end_row_no: record_ids[end_index].clone(),
+                target_row_no: record_ids[target_index].clone(),
+            };
+
+            // Create sequence and target as before
             let sequence = features[index..index + sequence_length].to_vec();
             let target = targets[target_index].clone();
 
-            items.push(SequenceDatasetItem { sequence, target });
+            items.push((metadata, SequenceDatasetItem { sequence, target }));
         }
 
         Self { items }
     }
 
-    /// Build dataset from pre-created items.
+    /// Build dataset from pre-created tuples of metadata and items.
     ///
     /// This is useful for combining items from multiple sources (e.g., different
     /// weather stations) where each source creates its own internally-consistent
     /// sequences, but they can be safely mixed for training.
-    pub fn from_items(items: Vec<SequenceDatasetItem>) -> Self {
+    pub fn from_items(items: Vec<(Metadata, SequenceDatasetItem)>) -> Self {
         Self { items }
+    }
+}
+
+impl SequenceDataset {
+    /// Retrieve metadata for a specific dataset item
+    pub fn get_metadata(&self, index: usize) -> Option<&Metadata> {
+        self.items.get(index).map(|(metadata, _)| metadata)
     }
 }
 
 impl Dataset<SequenceDatasetItem> for SequenceDataset {
     fn get(&self, index: usize) -> Option<SequenceDatasetItem> {
-        // Just clone the pre-created item - much faster than creating from scratch
-        self.items.get(index).cloned()
+        // Extract the item from the tuple, cloning it
+        self.items.get(index).map(|(_, item)| item.clone())
     }
 
     fn len(&self) -> usize {
@@ -297,7 +346,7 @@ mod tests {
             record.insert("col1".to_string(), (i * 3 + 1) as f32);
             record.insert("col2".to_string(), (i * 3 + 2) as f32);
             record.insert("col3".to_string(), (i * 3 + 3) as f32);
-            builder.push(record).unwrap();
+            builder.push(record, i.to_string()).unwrap();
         }
 
         // Verify features and targets are separate
@@ -326,8 +375,14 @@ mod tests {
         // Targets: [[10], [20], [30], [40]]
         let targets = vec![vec![10.0], vec![20.0], vec![30.0], vec![40.0]];
 
+        let record_ids = vec![
+            "0".to_string(),
+            "1".to_string(),
+            "2".to_string(),
+            "3".to_string(),
+        ];
         let dataset = SequenceDataset::from_features_and_targets(
-            features, targets, 2, // sequence_length
+            features, targets, record_ids, 2, // sequence_length
             0, // prediction_horizon (predict immediately after sequence)
         );
 

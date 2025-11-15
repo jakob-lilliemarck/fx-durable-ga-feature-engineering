@@ -222,11 +222,13 @@ mod tests {
             let value = pattern[i % pattern.len()];
             let mut record = HashMap::new();
             record.insert("value".to_string(), value);
-            builder.push(record).unwrap();
+            builder.push(record, i.to_string()).unwrap();
         }
 
         // Split into train (80%) and validation (20%)
-        let (dataset_train, dataset_valid) = builder.build(4, 1, 0.8).expect("should build");
+        let (dataset_train, opt_dataset_valid) =
+            builder.build(4, 1, Some(0.8)).expect("should build");
+        let dataset_valid = opt_dataset_valid.expect("should get validation dataset");
 
         // Create model - input_size=1 (single feature), output_size=1, seq_len=4
         let model = SimpleLstm::<Backend>::new(&device, 1, 64, 1, 4);

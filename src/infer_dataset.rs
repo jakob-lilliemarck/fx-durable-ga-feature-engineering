@@ -242,7 +242,7 @@ pub fn run_inference<B: Backend>(
             if current_idx >= sequence_length {
                 // prediction_idx: the index of the value we're trying to predict (current_idx + prediction_horizon)
                 let prediction_idx = current_idx + prediction_horizon;
-                
+
                 // Build a SequenceDatasetItem: sequence_length consecutive features,
                 // with the target being prediction_horizon steps after the sequence ends.
                 // current_idx is the reference point (the "now" in the sequence).

@@ -266,7 +266,7 @@ fn build_dataset_from_file(
         }
 
         // Push to builder (skips rows where pipeline returns None)
-        dataset_builder.push(record)?;
+        dataset_builder.push(record, row.no.to_string())?;
     }
 
     Ok(dataset_builder)
@@ -346,18 +346,26 @@ fn main() -> anyhow::Result<()> {
                 );
 
                 let dataset_builder = build_dataset_from_file(path, &features, &targets)?;
-                let (train, valid) =
-                    dataset_builder.build(sequence_length, prediction_horizon, 0.8)?;
+                let (train, opt_valid) =
+                    dataset_builder.build(sequence_length, prediction_horizon, Some(0.8))?;
+                let valid = opt_valid.expect("must get a validation dataset during training");
 
                 let train_len = train.len();
-                let valid_len = valid.len();
 
-                // Collect items from this station
+                // Collect items and metadata from this station
                 for idx in 0..train_len {
-                    all_train_items.push(train.get(idx).unwrap());
+                    if let Some(metadata) = train.get_metadata(idx) {
+                        if let Some(item) = train.get(idx) {
+                            all_train_items.push((metadata.clone(), item));
+                        }
+                    }
                 }
-                for idx in 0..valid_len {
-                    all_valid_items.push(valid.get(idx).unwrap());
+                for idx in 0..valid.len() {
+                    if let Some(metadata) = valid.get_metadata(idx) {
+                        if let Some(item) = valid.get(idx) {
+                            all_valid_items.push((metadata.clone(), item));
+                        }
+                    }
                 }
             }
 
